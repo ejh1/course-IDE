@@ -1,0 +1,13 @@
+.code-editor {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    .ce-tabs {
+        flex-shrink: 0; // Avoid margin commi
+        margin-top: 10px;
+    }
+    .ce-editor {
+        flex-grow: 1;
+        margin-right: 5px;
+    }
+}

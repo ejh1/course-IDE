@@ -1,0 +1,19 @@
+<script>
+    window.addEventListener('message', function(e) {
+        const {javascript, html, css} = e.data || {};
+        console.error(e);
+        if (html) {
+            document.documentElement.innerHTML = html;
+        }
+        if (css) {
+            const style = document.createElement('style');
+            style.type = 'text/css';
+            style.innerHTML = css;
+            document.head.appendChild(style);
+        }
+        if (javascript) {
+            eval(javascript);
+        }
+    });
+    window.parent.postMessage('sandbox-ready', '*')
+</script>

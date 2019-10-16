@@ -1,0 +1,20 @@
+$headerHeight: 55px;
+.app {
+    header {
+        direction: rtl;
+        height: $headerHeight;
+        display: flex;
+        align-items: center;
+        box-shadow: 0 2px 8px #f0f1f2;
+        img {
+            height: 75%;
+            margin-right: 10px;
+        }
+    }
+    .app-body {
+        position: absolute;
+        width: 100%;
+        top: $headerHeight;
+        bottom: 0px;
+    }
+}

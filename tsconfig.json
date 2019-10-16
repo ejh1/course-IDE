@@ -1,0 +1,17 @@
+{
+    "compilerOptions": {
+        "outDir": "./dist/",
+        "sourceMap": true,
+        "noImplicitAny": true,
+        "module": "commonjs",
+        "allowSyntheticDefaultImports" : true,
+        "esModuleInterop" : true,
+        "target": "es6",
+        "jsx": "react",
+        "baseUrl": ".",
+        "paths": {
+            "@components/*" : ["src/components/*"],
+            "@assets/*": ["src/assets/*"]
+        }
+    }
+}
