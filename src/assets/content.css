@@ -1,0 +1,7 @@
+body > p, body > h1 {
+    unicode-bidi: plaintext;
+}
+.code-block {
+    border: solid 1px gray;
+    border-radius: 5px;
+}

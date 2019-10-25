@@ -8,8 +8,7 @@ import { Splitter } from '@components/Splitter';
 import { ClassView } from '@components/ClassView';
 
 export const App = () => {
-    const [classCode, setClassCode] = useGlobal('code');
-    const [classData] = useGlobal('classData');
+    const [classCode] = useGlobal('code');
     const loadClass = useDispatch('selectCode');
     const codeClick = () => loadClass((classInputRef.current as HTMLInputElement).value);
     const classInputRef = useRef();
@@ -21,14 +20,14 @@ export const App = () => {
                     קוד שיעור:
                     {classCode ? <span className="got-class" >{classCode}</span> :
                         <span>
-                            <input defaultValue="class1" ref={classInputRef} />
+                            <input defaultValue="root" ref={classInputRef} />
                             <Button onClick={codeClick}>טען</Button>
                         </span>
                     }
                 </span>
             </header>
             <div className="app-body">
-                { classData ? <Splitter><ClassView/><CodeControl/></Splitter> : <CodeControl/> }
+                { classCode ? <Splitter><ClassView/><CodeControl/></Splitter> : <CodeControl/> }
             </div>
         </div>
     );

@@ -1,5 +1,5 @@
-import React from 'react';
-import { Tabs } from 'antd';
+import React from 'reactn';
+import { Tabs, Button } from 'antd';
 const { TabPane } = Tabs;
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 
@@ -8,6 +8,7 @@ import './styles.scss';
 interface IProps {
     value?: string;
     options?: monaco.editor.IEditorOptions;
+    loadedData?: {[key: string]: string}
 }
 export default class CodeEditor extends React.Component<IProps> {
     setRef = (element: HTMLDivElement) => {
@@ -33,12 +34,24 @@ export default class CodeEditor extends React.Component<IProps> {
     }
     componentWillUnmount = () => this._editor && this._editor.dispose();
 
+    componentDidUpdate = ({loadedData: oldData}: IProps) => {
+        const {loadedData: newData} = this.props;
+        if (newData && newData !== oldData) {
+            this.tabs.forEach((tab, idx) => {
+                (tab.model as monaco.editor.ITextModel).setValue(newData[tab.lang] || '');
+                if (this.chosenTabIndex == idx) {
+                    this._editor.setModel(tab.model);
+                }
+            });
+        }
+    }
+
     _editor: monaco.editor.IStandaloneCodeEditor = null;
 
     tabs: any[] = [
         {name: 'JavaScript', lang: 'javascript'},
-        {name: 'CSS', lang: 'css'},
-        {name: 'HTML', lang: 'html'}
+        {name: 'HTML', lang: 'html'},
+        {name: 'CSS', lang: 'css'}
     ];
     chosenTabIndex = 0;
 
@@ -50,13 +63,20 @@ export default class CodeEditor extends React.Component<IProps> {
         this._editor.setModel(tab.model);
         tab.viewState && this._editor.restoreViewState(tab.viewState);
     }
-    getData = () => this.tabs.reduce((acc, {lang, model}) => {
-        acc[lang] = (model as monaco.editor.ITextModel).getValue();
-        return acc;
-    }, {});
+    execute = () => {
+        const executionData = this.tabs.reduce((acc, {lang, model}) => {
+            acc[lang] = (model as monaco.editor.ITextModel).getValue();
+            return acc;
+        }, {});
+        this.setGlobal({executionData});
+    }
     render() {
         return (<div className="code-editor">
-            <Tabs className="ce-tabs" onChange={this.tabChanged} type="card">
+            <Tabs
+                className="ce-tabs"
+                onChange={this.tabChanged} type="card"
+                tabBarExtraContent={<Button onClick={this.execute} icon="play-square"/>}
+            >
                 {this.tabs.map(({name}) => <TabPane tab={name} key={name} />)}
             </Tabs>
             <div className="ce-editor" ref={this.setRef} />;

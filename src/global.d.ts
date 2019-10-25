@@ -1,22 +1,28 @@
 import 'reactn';
-import { IFile } from './services/class-data';
+import { IFile, IFolder } from './services/class-data';
 
 declare module 'reactn/default' {
     interface Reducer<T, O> {
         (global: State, dispatch: Dispatch, value: T): O;
     }
     export interface Reducers {
-        setCode: Reducer< State['code'], Pick<State, 'code'> >;
-        setClassData: Reducer< State['classData'], Pick<State, 'classData'> >;
+        setCode: Reducer< State['code'], Pick<State, 'code' & 'footFolder'> >;
         selectCode: Reducer<State['code'], void>;
-        setSelectedFile: Reducer< State['code'], void >;
-        addFiles: Reducer< State['files'], Pick<State, 'files'> >;
+        setSelectedFile: Reducer< State['selectedFile'], void >;
         selectFile: Reducer< IFile, void>;
+        setFolders: Reducer< State['folders'], Pick<State, 'folders'> >;
+        getFolder: (global: State, dispatch: Dispatch, folder: string, callback?: () => void) => void;
+        setFiles: Reducer< State['files'], Pick<State, 'files'> >;
+        getFile: Reducer< IFile, void>;
     }
     export interface State {
         'code': string;
+        'rootFolder': string;
         'classData': any;
-        'selectedFile': string;
+        'selectedFile': IFile;
+        'folders': {[key: string]: IFolder};
         'files': {[key: string]: string};
+        'loadedData': {[key: string]: string};
+        'executionData': object;
     }
 }
