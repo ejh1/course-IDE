@@ -1,0 +1,23 @@
+.console-collapse {
+    .ant-collapse-content-box {
+        padding: 0 !important;
+    }
+    .console-body {
+        height: 35vh;
+        overflow: scroll;
+        .console-item {
+            padding: 5px;
+            border-bottom: solid 1px lightgray;
+        }
+    }
+    .console-tag, .console-item {
+        &.error {
+            color: #f5222d;
+            background-color: #fff1f0;
+        }
+        &.warn {
+            color: #faad14;
+            background-color: #fffbe6;
+        }
+    }
+}

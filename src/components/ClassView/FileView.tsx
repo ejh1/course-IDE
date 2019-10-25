@@ -10,15 +10,15 @@ export const FileView = () => {
     const [_loadedData, setLoadedData] = useGlobal('loadedData');
     const frameRef = useRef<HTMLIFrameElement>();
     useEffect(() => {
-        const fileData = selectedFile && files && files[selectedFile.file] || '';
+        const fileData = selectedFile && files && files[selectedFile.key] || '';
         const {body} = frameRef.current.contentDocument;
         body.innerHTML = fileData;
         body.querySelectorAll('.code-block').forEach(block => {
             const div = document.createElement('div');
             block.firstChild && block.insertBefore(div, block.firstChild);
-            const code = decodeURIComponent(block.getAttribute('data-value'));
+            const data = JSON.parse(decodeURIComponent(block.getAttribute('data-value')));
             div.innerHTML = '<button>טען</button>';
-            (div.firstChild as HTMLButtonElement).onclick = () => setLoadedData({'javascript': code});
+            (div.firstChild as HTMLButtonElement).onclick = () => setLoadedData(data);
         })
     }, [selectedFile, files])
     const prepIframe = useCallback((node: HTMLIFrameElement) => {

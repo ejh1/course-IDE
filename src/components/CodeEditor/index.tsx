@@ -79,7 +79,7 @@ export default class CodeEditor extends React.Component<IProps> {
             >
                 {this.tabs.map(({name}) => <TabPane tab={name} key={name} />)}
             </Tabs>
-            <div className="ce-editor" ref={this.setRef} />;
+            <div className="ce-editor" ref={this.setRef} />
         </div>)
     }
 }

@@ -1,13 +1,18 @@
 import { addReducers, setGlobal } from 'reactn';
+import { object } from 'prop-types';
 const CLASSES_BASE_PATH = 'https://firebasestorage.googleapis.com/v0/b/course-ide.appspot.com/o/';
 
 export interface IFile {
     name: string;
-    file: string;
+    key: string;
 }
 export interface IFolder {
-    folders: IFile[];
-    files: IFile[];
+    children: IFile[];
+}
+export interface IConsoleItem {
+    type: 'log'|'error'|'warn';
+    msg: any;
+    otherArgs: any[];
 }
 export const isFolder = (key: string) => key.endsWith('.json');
 let initialized = false;
@@ -22,7 +27,7 @@ const fetchFile = async (file: string) => {
         }    
     }
     const response = await fetch(`${CLASSES_BASE_PATH}${file}?alt=media`);
-    return response.text();
+    return response.ok ? response.text() : '';
 }
 export const initializeGlobalState = () => {
     if (initialized) {
@@ -32,7 +37,8 @@ export const initializeGlobalState = () => {
     initialized = true;
     setGlobal({
         'folders' : {},
-        'files': {}
+        'files': {},
+        'console': []
     });    
     addReducers({
         setCode: (_global, _dispatch, code: string) => ({code, rootFolder: code + '.json'}),
@@ -44,20 +50,21 @@ export const initializeGlobalState = () => {
         setSelectedFile: (_global, _dispatch, selectedFile: IFile) => ({selectedFile}),
         selectFile: async (global, dispatch, file: IFile) => {
             dispatch.setSelectedFile(file);
-            if (!global.files[file.file]) {
+            if (!global.files[file.key]) {
                 await dispatch.getFile(file);
             }
         },
         setFolders: (global, _dispatch, folders: {[key: string]: IFolder}) => ({folders: {...global.folders, ...folders}}),
         getFolder: async (_global, dispatch, folder: string, callback?: () => void) => {
             const json = await fetchFile(folder);
-            dispatch.setFolders({[folder]: json ? JSON.parse(json) : {}});
+            json && dispatch.setFolders({[folder]: JSON.parse(json)});
             callback && callback();
         },
         setFiles: (global, _dispatch, files: {[key: string]: string}) => ({files: {...global.files, ...files}}),
-        getFile: async (global, dispatch, {file}: IFile) => {
-            const text = await fetchFile(file);
-            dispatch.setFiles({[file]:text});
+        getFile: async (global, dispatch, {key}: IFile) => {
+            const text = await fetchFile(key);
+            dispatch.setFiles({[key]:text});
         },
+        consolePush: (global, _dispatch, record: IConsoleItem) => ({console: [...global.console, record]}),
     });
 }

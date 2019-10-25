@@ -11,6 +11,12 @@
             right: 3px;
             height: 100%;
         }
+        &:first-child .splitter-item-inner {
+            left: 0px;
+        }
+        &:last-child .splitter-item-inner {
+            right: 0px;
+        }
         .splitter-divider {
             position: absolute;
             height: 100%;

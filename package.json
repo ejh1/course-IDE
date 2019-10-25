@@ -12,6 +12,7 @@
   "author": "Ethan Hall https://github.com/ejh1",
   "license": "ISC",
   "devDependencies": {
+    "@types/lodash": "^4.14.144",
     "@types/react": "^16.9.5",
     "@types/react-dom": "^16.9.1",
     "aws-sdk": "^2.546.0",
@@ -33,6 +34,7 @@
   },
   "dependencies": {
     "antd": "^3.23.6",
+    "lodash": "^4.17.15",
     "monaco-editor": "^0.18.1",
     "monaco-editor-webpack-plugin": "^1.7.0",
     "react": "^16.10.2",

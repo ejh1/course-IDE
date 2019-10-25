@@ -20,20 +20,19 @@ export const FolderView = () => {
         }
     }
     const onSelect = (names: string[]) => {
-        const key = names[0];
-        if (key && !isFolder(key)) {
+        const _key = names[0];
+        if (_key && !isFolder(_key)) {
             let entity = null;
-            Object.values(folders).find(folder => entity = folder.files.find(({file}) => file === key));
+            Object.values(folders).find(folder => entity = folder.children.find(({key}) => key === _key));
             entity && selectFile(entity);
         }
     }
     const displayFolder = (key: string) => {
         const folder = folders[key];
-        return folder &&
-            ((folder.folders || [])).map(({file, name}) =>
-                <TreeNode title={name} key={file} loadData={loadFolder}>{displayFolder(file)}</TreeNode>)
-            .concat
-                (((folder.files || [])).map(({file, name}) => <TreeNode title={name} key={file} isLeaf/>));
+        return folder && folder.children.map(({key, name}) => isFolder(key) ? 
+            <TreeNode title={name} key={key} loadData={loadFolder}>{displayFolder(key)}</TreeNode> :
+            <TreeNode title={name} key={key} isLeaf/>
+        );
     }
     return <DirectoryTree
             loadData={loadFolder}

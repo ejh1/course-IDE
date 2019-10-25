@@ -1,5 +1,5 @@
 import 'reactn';
-import { IFile, IFolder } from './services/class-data';
+import { IFile, IFolder, IConsoleItem } from './services/class-data';
 
 declare module 'reactn/default' {
     interface Reducer<T, O> {
@@ -14,6 +14,7 @@ declare module 'reactn/default' {
         getFolder: (global: State, dispatch: Dispatch, folder: string, callback?: () => void) => void;
         setFiles: Reducer< State['files'], Pick<State, 'files'> >;
         getFile: Reducer< IFile, void>;
+        consolePush: Reducer< object, Pick<State, 'console'> >;
     }
     export interface State {
         'code': string;
@@ -24,5 +25,6 @@ declare module 'reactn/default' {
         'files': {[key: string]: string};
         'loadedData': {[key: string]: string};
         'executionData': object;
+        'console': IConsoleItem[];
     }
 }
