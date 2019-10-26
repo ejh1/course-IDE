@@ -75,7 +75,7 @@ export default class CodeEditor extends React.Component<IProps> {
             <Tabs
                 className="ce-tabs"
                 onChange={this.tabChanged} type="card"
-                tabBarExtraContent={<Button onClick={this.execute} icon="play-square"/>}
+                tabBarExtraContent={<Button onClick={this.execute} icon="play-square" shape="circle"/>}
             >
                 {this.tabs.map(({name}) => <TabPane tab={name} key={name} />)}
             </Tabs>
