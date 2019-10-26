@@ -1,7 +1,27 @@
-body > p, body > h1, body > h2, body > h3, body > h4, body > h5 {
+body {
+    direction: rtl;
+}
+code {
     unicode-bidi: plaintext;
+    padding: 3px;
+    background: lightgray;
 }
 .code-block {
+    direction: ltr;;
     border: solid 1px gray;
     border-radius: 5px;
+    padding-bottom: 5px;
+}
+.code-block-load {
+    padding: 5px;
+    background: #fafafa;
+    border-radius: 5px 5px 0 0;
+    border-bottom: solid 1px lightgray;
+}
+.code-block-load button {
+    background-color: #1890ff;
+    color: white;
+    padding: 4px 15px;
+    border: none;
+    border-radius: 4px;
 }

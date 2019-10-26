@@ -55,9 +55,16 @@ export const initializeGlobalState = () => {
             }
         },
         setFolders: (global, _dispatch, folders: {[key: string]: IFolder}) => ({folders: {...global.folders, ...folders}}),
-        getFolder: async (_global, dispatch, folder: string, callback?: () => void) => {
+        getFolder: async (global, dispatch, folder: string, callback?: () => void) => {
             const json = await fetchFile(folder);
             json && dispatch.setFolders({[folder]: JSON.parse(json)});
+            if (json && folder === global.rootFolder) {
+                const data = JSON.parse(json);
+                const first = data.children[0];
+                if (first && !isFolder(first.key)) {
+                    dispatch.selectFile(first);
+                }
+            }
             callback && callback();
         },
         setFiles: (global, _dispatch, files: {[key: string]: string}) => ({files: {...global.files, ...files}}),

@@ -32,7 +32,7 @@ export default () => {
         >
             <div className="console-body">
                 {/* msg + '' handles better cases that toString doesn't like null|undefined|0|false */}
-                {items.map(({type, msg}, idx) => <div key={idx} className={`console-item ${type}`}>{msg+''}</div>)}
+                {items.map(({type, msg, otherArgs}, idx) => <div key={idx} className={`console-item ${type}`}>{otherArgs ? [msg, ...otherArgs].map(m => m+'').join(' ') : msg+''}</div>)}
             </div>
         </Panel>
     </Collapse>

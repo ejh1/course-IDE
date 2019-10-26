@@ -15,6 +15,7 @@ export const FileView = () => {
         body.innerHTML = fileData;
         body.querySelectorAll('.code-block').forEach(block => {
             const div = document.createElement('div');
+            div.className = 'code-block-load';
             block.firstChild && block.insertBefore(div, block.firstChild);
             const data = JSON.parse(decodeURIComponent(block.getAttribute('data-value')));
             div.innerHTML = '<button>טען</button>';
