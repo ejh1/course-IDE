@@ -1,10 +1,12 @@
 body {
     direction: rtl;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
 }
 code {
     unicode-bidi: plaintext;
     padding: 3px;
-    background: lightgray;
+    background: #e8e8e8;
+    border-radius: 3px;
 }
 .code-block {
     direction: ltr;;
@@ -12,13 +14,40 @@ code {
     border-radius: 5px;
     padding-bottom: 5px;
 }
-.code-block-load {
+div[data-language] {
     padding: 5px;
-    background: #fafafa;
+}
+.code-block-header {
+    padding: 5px;
+    background: #eee;
     border-radius: 5px 5px 0 0;
     border-bottom: solid 1px lightgray;
+    display: flex;
+    justify-content: space-between;
 }
-.code-block-load button {
+.code-block-header .tabs {
+    display: flex;
+    position: relative;
+    top: 5px;
+}
+.code-block-header .tabs .tab {
+    color: black;
+    background: #fafafa;
+    border: solid 1px #e8e8e8;
+    border-radius: 4px 4px 0 0;
+    padding: 5px 8px;
+    margin-left: 5px;
+    border-bottom-width: 0;
+    cursor: pointer;
+}
+.code-block-header .tabs .tab.selected {
+    background: white;
+    color: #1890ff;
+    border-bottom: solid 1px transparent;
+    position: relative;
+    top: 1px;
+}
+.code-block-header button {
     background-color: #1890ff;
     color: white;
     padding: 4px 15px;

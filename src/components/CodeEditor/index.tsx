@@ -64,7 +64,7 @@ export default class CodeEditor extends React.Component<IProps> {
         tab.viewState && this._editor.restoreViewState(tab.viewState);
     }
     execute = () => {
-        const executionData = this.tabs.reduce((acc, {lang, model}) => {
+        const executionData: {} = this.tabs.reduce((acc: {[key: string]: string}, {lang, model}) => {
             acc[lang] = (model as monaco.editor.ITextModel).getValue();
             return acc;
         }, {});
