@@ -2,6 +2,7 @@ import React from 'reactn';
 import { Tabs, Button } from 'antd';
 const { TabPane } = Tabs;
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
+import { Debugger } from '../../services/debugger';
 
 import './styles.scss';
 
@@ -47,8 +48,9 @@ export default class CodeEditor extends React.Component<IProps> {
     }
 
     _editor: monaco.editor.IStandaloneCodeEditor = null;
+    _debugger: Debugger;
 
-    tabs: any[] = [
+    tabs: {name: string, lang: string, model?: monaco.editor.ITextModel, viewState?: any}[] = [
         {name: 'JavaScript', lang: 'javascript'},
         {name: 'HTML', lang: 'html'},
         {name: 'CSS', lang: 'css'}
@@ -70,12 +72,24 @@ export default class CodeEditor extends React.Component<IProps> {
         }, {});
         this.setGlobal({executionData});
     }
+    debug = () => {
+        const {model} = this.tabs[0];
+        this._debugger = new Debugger(model!, null);
+    }
+    stopDebugging = () => {
+
+    }
     render() {
         return (<div className="code-editor">
             <Tabs
                 className="ce-tabs"
                 onChange={this.tabChanged} type="card"
-                tabBarExtraContent={<Button onClick={this.execute} icon="play-square" shape="circle"/>}
+                tabBarExtraContent={
+                    <React.Fragment>
+                        <Button onClick={this.execute} icon="play-square" shape="circle"/>
+                        <Button onClick={this.debug} icon="debug"/>
+                    </React.Fragment>
+                }
             >
                 {this.tabs.map(({name}) => <TabPane tab={name} key={name} />)}
             </Tabs>
