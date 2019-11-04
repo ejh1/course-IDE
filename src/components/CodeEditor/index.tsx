@@ -11,6 +11,9 @@ interface IProps {
     loadedData?: {[key: string]: string}
 }
 export default class CodeEditor extends React.Component<IProps> {
+    state = {
+        chosenTabIndex : 0
+    }
     setRef = (element: HTMLDivElement) => {
         const { value, options} = this.props;
         this.componentWillUnmount();
@@ -30,7 +33,7 @@ export default class CodeEditor extends React.Component<IProps> {
             lineDecorationsWidth: 5,
             ...options
         });
-        this._editor.setModel(this.tabs[this.chosenTabIndex].model);
+        this._editor.setModel(this.tabs[this.state.chosenTabIndex].model);
     }
     componentWillUnmount = () => this._editor && this._editor.dispose();
 
@@ -39,10 +42,11 @@ export default class CodeEditor extends React.Component<IProps> {
         if (newData && newData !== oldData) {
             this.tabs.forEach((tab, idx) => {
                 (tab.model as monaco.editor.ITextModel).setValue(newData[tab.lang] || '');
-                if (this.chosenTabIndex == idx) {
-                    this._editor.setModel(tab.model);
-                }
             });
+            const firstTab = this.tabs.find(({lang}) => newData[lang]);
+            if (firstTab) {
+                this.tabChanged(firstTab.name);
+            }
         }
     }
 
@@ -53,13 +57,13 @@ export default class CodeEditor extends React.Component<IProps> {
         {name: 'HTML', lang: 'html'},
         {name: 'CSS', lang: 'css'}
     ];
-    chosenTabIndex = 0;
 
     tabChanged = (key: string) => {
-        const prevTab = this.tabs[this.chosenTabIndex]
+        const prevTab = this.tabs[this.state.chosenTabIndex]
         prevTab.viewState = this._editor.saveViewState();
-        this.chosenTabIndex = this.tabs.findIndex(({name}) => name === key);
-        const tab = this.tabs[this.chosenTabIndex];
+        const chosenTabIndex = this.tabs.findIndex(({name}) => name === key);
+        this.setState({ chosenTabIndex });
+        const tab = this.tabs[chosenTabIndex];
         this._editor.setModel(tab.model);
         tab.viewState && this._editor.restoreViewState(tab.viewState);
     }
@@ -73,6 +77,7 @@ export default class CodeEditor extends React.Component<IProps> {
     render() {
         return (<div className="code-editor">
             <Tabs
+                activeKey={this.tabs[this.state.chosenTabIndex].name}
                 className="ce-tabs"
                 onChange={this.tabChanged} type="card"
                 tabBarExtraContent={<Button onClick={this.execute} icon="play-square" shape="circle"/>}
