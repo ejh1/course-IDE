@@ -12,7 +12,7 @@ export interface IFolder {
 export interface IConsoleItem {
     type: 'log'|'error'|'warn';
     msg: any;
-    otherArgs: any[];
+    otherArgs?: any[];
 }
 export const isFolder = (key: string) => key.endsWith('.json');
 let initialized = false;

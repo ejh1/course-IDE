@@ -14,7 +14,7 @@ declare module 'reactn/default' {
         getFolder: (global: State, dispatch: Dispatch, folder: string, callback?: () => void) => void;
         setFiles: Reducer< State['files'], Pick<State, 'files'> >;
         getFile: Reducer< IFile, void>;
-        consolePush: Reducer< object, Pick<State, 'console'> >;
+        consolePush: Reducer< IConsoleItem, Pick<State, 'console'> >;
     }
     export interface State {
         'code': string;
