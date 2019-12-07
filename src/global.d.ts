@@ -1,13 +1,11 @@
 import 'reactn';
-import { IFile, IFolder, IConsoleItem } from './services/class-data';
+import { IFile, IFolder, IConsoleItem, ILanguage } from '@services/class-data';
 
 declare module 'reactn/default' {
     interface Reducer<T, O> {
         (global: State, dispatch: Dispatch, value: T): O;
     }
     export interface Reducers {
-        setCode: Reducer< State['code'], Pick<State, 'code' & 'footFolder'> >;
-        selectCode: Reducer<State['code'], void>;
         setSelectedFile: Reducer< State['selectedFile'], void >;
         selectFile: Reducer< IFile, void>;
         setFolders: Reducer< State['folders'], Pick<State, 'folders'> >;
@@ -17,8 +15,6 @@ declare module 'reactn/default' {
         consolePush: Reducer< IConsoleItem, Pick<State, 'console'> >;
     }
     export interface State {
-        'code': string;
-        'rootFolder': string;
         'classData': any;
         'selectedFile': IFile;
         'folders': {[key: string]: IFolder};
@@ -26,5 +22,6 @@ declare module 'reactn/default' {
         'loadedData': {[key: string]: string};
         'executionData': object;
         'console': IConsoleItem[];
+        'language': ILanguage;
     }
 }

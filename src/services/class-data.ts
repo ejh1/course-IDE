@@ -9,6 +9,25 @@ export interface IFile {
 export interface IFolder {
     children: IFile[];
 }
+export interface ILanguage {
+    code: string;
+    title: string;
+    pathPrefix: string;
+}
+export const ROOT_FOLDER = 'root.json';
+export const languages: ILanguage[] = [
+    {
+        code : 'he',
+        title : 'עב',
+        pathPrefix : ''
+    },
+    {
+        code : 'ar',
+        title : 'عر',
+        pathPrefix : 'ar/'
+    }
+];
+const defaultLanguage = languages[0];
 export interface IConsoleItem {
     type: 'log'|'error'|'warn';
     msg: any;
@@ -26,7 +45,7 @@ const fetchFile = async (file: string) => {
             }) as string;
         }    
     }
-    const response = await fetch(`${CLASSES_BASE_PATH}${file}?alt=media`);
+    const response = await fetch(`${CLASSES_BASE_PATH}${encodeURIComponent(file)}?alt=media`);
     return response.ok ? response.text() : '';
 }
 export const initializeGlobalState = () => {
@@ -36,17 +55,12 @@ export const initializeGlobalState = () => {
     }
     initialized = true;
     setGlobal({
-        'folders' : {},
-        'files': {},
-        'console': []
+        folders : {},
+        files: {},
+        console: [],
+        language: defaultLanguage
     });    
     addReducers({
-        setCode: (_global, _dispatch, code: string) => ({code, rootFolder: code + '.json'}),
-        selectCode: async (_global, dispatch, code: string) => {
-            dispatch.setCode(code);
-            dispatch.getFolder(code+'.json');
-        },
-
         setSelectedFile: (_global, _dispatch, selectedFile: IFile) => ({selectedFile}),
         selectFile: async (global, dispatch, file: IFile) => {
             dispatch.setSelectedFile(file);
@@ -56,9 +70,9 @@ export const initializeGlobalState = () => {
         },
         setFolders: (global, _dispatch, folders: {[key: string]: IFolder}) => ({folders: {...global.folders, ...folders}}),
         getFolder: async (global, dispatch, folder: string, callback?: () => void) => {
-            const json = await fetchFile(folder);
+            const json = await fetchFile(global.language.pathPrefix + folder);
             json && dispatch.setFolders({[folder]: JSON.parse(json)});
-            if (json && folder === global.rootFolder) {
+            if (json && folder === ROOT_FOLDER) {
                 const data = JSON.parse(json);
                 const first = data.children[0];
                 if (first && !isFolder(first.key)) {
@@ -69,7 +83,7 @@ export const initializeGlobalState = () => {
         },
         setFiles: (global, _dispatch, files: {[key: string]: string}) => ({files: {...global.files, ...files}}),
         getFile: async (global, dispatch, {key}: IFile) => {
-            const text = await fetchFile(key);
+            const text = await fetchFile(global.language.pathPrefix + key);
             dispatch.setFiles({[key]:text});
         },
         consolePush: (global, _dispatch, record: IConsoleItem) => ({console: [...global.console, record]}),

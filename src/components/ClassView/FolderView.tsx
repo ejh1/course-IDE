@@ -1,5 +1,5 @@
 import React, { useGlobal, useDispatch } from 'reactn';
-import { IFile, isFolder } from 'src/services/class-data';
+import { IFile, isFolder, ROOT_FOLDER } from '@services/class-data';
 import { Tree } from 'antd';
 import { AntTreeNode } from 'antd/lib/tree';
 
@@ -7,7 +7,6 @@ const { TreeNode, DirectoryTree } = Tree;
 
 export const FolderView = () => {
     const [folders] = useGlobal('folders');
-    const [rootFolder] = useGlobal('rootFolder');
     const selectFile = useDispatch('selectFile');
     const getFolder = useDispatch('getFolder');
 
@@ -38,6 +37,6 @@ export const FolderView = () => {
             loadData={loadFolder}
             onSelect={onSelect}
         >
-            {displayFolder(rootFolder)}
+            {displayFolder(ROOT_FOLDER)}
         </DirectoryTree>
 }

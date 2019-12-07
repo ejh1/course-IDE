@@ -1,5 +1,5 @@
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
-import { instanceOf } from "prop-types";
+import { TextCodes } from "@components/Trans";
 
 enum TokenType {
     Nothing, // Occupy the zero val
@@ -141,10 +141,14 @@ interface IVariableState {
     identifier: IToken;
     value?: any;
 }
+export type ITextData = {
+    text?: TextCodes;
+    params?: Record<string, string>;
+}
 export class DebugExecution {
     clearNext?: () => void;
     stepCallback: (line: number, offset: number) => void;
-    annotationCallback: (line: number, start: number, end: number, msg: string, isError?: boolean) => void;
+    annotationCallback: (line: number, start: number, end: number, msg: ITextData, isError?: boolean) => void;
     executionAborted: boolean = false;
     breakpointLines: {[key: number]: boolean};
     stepByStep: boolean;
@@ -167,10 +171,10 @@ export class DebugExecution {
     }
     handleError = (err: Error) => {
         if (err instanceof DebugError) {
-            const {message, token: {line, offset, value = ' '}} = err as DebugError;
-            this.annotationCallback(line, offset, offset + (value as string).length, message, true);
+            const {msg, token: {line, offset, value = ' '}} = err as DebugError;
+            this.annotationCallback(line, offset, offset + (value as string).length, msg, true);
         } else {
-            this.annotationCallback(0, 0, 0, 'אופס, קרתה שגיאה', true);
+            this.annotationCallback(0, 0, 0, {text: TextCodes.oops}, true);
             console.error(err);
         }
         this.executionAborted = true;
@@ -199,8 +203,8 @@ export class DebugExecution {
         }
         return true;
     }
-    getException = (token: IToken, msg: string) => new DebugError(msg, token);
-    notify = (token: IToken, msg: string) => {
+    getException = (token: IToken, msg: ITextData) => new DebugError(msg, token);
+    notify = (token: IToken, msg: ITextData) => {
         if (this.stepByStep) {
             this.lastNotificationToken = token;
             const {line, offset, value: tValue} = token;
@@ -216,8 +220,8 @@ interface IScope {
     get: (identifier: IToken) => any;
     _get: (key: string) => any;
     set: (key: string, value: any, identifier: IToken, declaredType?: TokenType) => void;
-    notify: (token: IToken, message: string) => void;
-    getException: (token: IToken, message: string) => Error;
+    notify: (token: IToken, message: ITextData) => void;
+    getException: (token: IToken, message: ITextData) => Error;
     variables: {[key: string]: IVariableState};
     global: IScope;
     execution: DebugExecution;
@@ -295,16 +299,16 @@ class Scope implements IScope {
         if (variable) {
             return variable.value;
         } else {
-            throw this.getException(identifier, `המשתנה ${key} לא הוגדר`);
+            throw this.getException(identifier, {text: TextCodes.undefined_var, params: {var: key}});
         }
     }
     set = (key: string, value: any, identifier: IToken, declaredType?: TokenType): void => {
         let variable: IVariableState = this._get(key);
         if (variable) {
             if (declaredType && this.variables[key]) { // TODO - differentiate between var and let/const
-                throw this.getException(identifier, `המשתנה ${identifier.value} כבר הוגדר בבלוק הזה.`);
+                throw this.getException(identifier, {text: TextCodes.alreadyDefined_var, params: {var: identifier.value.toString()}});
             } else if (variable.declaredType === TokenType.Const) {
-                throw this.getException(identifier, 'אסור לשנות משתנה שהוגדר כקבוע - const');
+                throw this.getException(identifier, {text: TextCodes.constChange});
             } else {
                 this.execution.setValue(variable.identifier, variable.value, value);
                 variable.value = value;
@@ -380,11 +384,11 @@ class Assignment implements IStatement {
             } else if (left instanceof DotStatement) {
                 await (left as DotStatement).assign(scope, val);
             } else {
-                throw scope.getException(token, 'אופס, קרתה תקלה');
+                throw scope.getException(token, {text: TextCodes.oops});
             }
             if (![TokenType.Number, TokenType.String].includes(right.token.type)) {
                 const displayVal = typeof val === 'string' ? `"${val}"` : val;
-                scope.notify(left.token, `הצבה: ${displayVal}`);
+                scope.notify(left.token, {text: TextCodes.assign_val, params:{val:displayVal}});
             }
         } else { // Relative assignment
             let oldVal = left instanceof Variable ? scope.get(left.token) : await left.execute(scope);
@@ -418,9 +422,9 @@ class Assignment implements IStatement {
             } else if (left instanceof DotStatement) {
                 await left.assign(scope, newVal);
             } else {
-                throw scope.getException(token, 'אופס, קרתה תקלה');
+                throw scope.getException(token, {text: TextCodes.oops});
             }
-            scope.notify(token, `הערך השתנה ל:${newVal}`);
+            scope.notify(token, {text:TextCodes.valChanged_val, params: {val: newVal}});
         }
         return returnVal;
     }
@@ -459,9 +463,9 @@ class FunctionDef implements IStatement {
             funcScope.set(token.value as string, args[idx], token, TokenType.Let);
         });
         if (args.length) {
-            scope.notify(this.identifier, `הפונקציה נקראה עם הפרמטרים ${args.map((value, idx) => 
+            scope.notify(this.identifier, {text:TextCodes.functionCall_vals, params: {vals: args.map((value, idx) => 
                 `${this.args[idx].token.value}:${value}`
-            ).join(';')}`)
+            ).join(';')}})
         }
         const result = await this.body.execute(funcScope);
         if (result instanceof ReturnValue) {
@@ -477,7 +481,7 @@ class Return implements IStatement {
     }
     execute = async (scope: IScope) => {
         const result = await this.arg.execute(scope);
-        scope.notify(this.arg.token, `הפונקציה מחזירה: ${result}`);
+        scope.notify(this.arg.token, {text: TextCodes.functionReturn_val, params: {val: result}});
         return new ReturnValue(result);
     }
 }
@@ -499,10 +503,10 @@ class If implements IStatement {
         const {condition, body, elseStatement} = this;
         let condValue = await condition.execute(scope);
         if (condValue) {
-            scope.notify(condition.token, `התנאי החזיר ${condValue} - ניכנס פנימה`);
+            scope.notify(condition.token, {text: TextCodes.condPass_val, params:{val: condValue}});
             return await body.execute(scope);
         } else {
-            scope.notify((elseStatement || condition).token, `התנאי החזיר ${condValue} - ממשיכים הלאה`);
+            scope.notify((elseStatement || condition).token, {text: TextCodes.condFail_val, params:{val: condValue}});
             scope.execution.mayIExecute(condition.token);
             return elseStatement && await elseStatement.execute(scope);
         }
@@ -524,7 +528,7 @@ class Loop implements IStatement {
         while (true) {
             const condValue = await condition.execute(myScope);
             if (condValue) {
-                myScope.notify(condition.token, `התנאי החזיר ${condValue} - ניכנס פנימה`);
+                myScope.notify(condition.token, {text: TextCodes.condPass_val, params: {val: condValue}});
                 let result = await body.execute(myScope);
                 if (result instanceof EndLoopRun && (result as EndLoopRun).token.type === TokenType.Break) {
                     break;
@@ -534,7 +538,7 @@ class Loop implements IStatement {
                     await scope.execution.mayIExecute();// Pause on post block notification
                 }
             } else {
-                myScope.notify(condition.token, `התנאי החזיר ${condValue} - ממשיכים הלאה`);
+                myScope.notify(condition.token, {text: TextCodes.condFail_val, params:{val: condValue}});
                 break;
             }
         }
@@ -546,9 +550,8 @@ class EndLoopRun implements IStatement {
         this.token = token;
     }
     execute = (scope: IScope) => {
-        scope.notify(this.token, this.token.type === TokenType.Break ? 
-            'זהו, סיימנו עם הלולאה' :
-            'ממשיכים לעוד סיבוב בלולאה'
+        scope.notify(this.token, {text: this.token.type === TokenType.Break ? 
+            TextCodes.loopDone : TextCodes.loopContinue }
         );
         return this;
     }
@@ -643,9 +646,10 @@ class OperationStatement implements IStatement {
 }
 class DebugError extends Error {
     token: IToken;
-    constructor(message: string, token: DebugError['token']) {
-        super(message);
-        this.token = token;
+    msg: ITextData;
+    constructor(msg: DebugError['msg'], token: DebugError['token']) {
+        super(msg.text.toString());
+        Object.assign(this, {msg, token});
     }
 }
 type ICompResult<T = IStatement> = [T, number];
@@ -686,12 +690,10 @@ class JSInerpreter {
             line: -1,
             offset: -1
         });
-        console.log(this.tokens);
         const [top, nextIdx] = this.compileBlock(0);
         this.top = top;
-        console.log(top);
         if (this.tokens[nextIdx]) {
-            throw this.getCompilationError('שגיאה בעיבוד הקוד', this.tokens[this.tokens.length - 2]);
+            throw this.getCompilationError({text:TextCodes.parseError}, this.tokens[this.tokens.length - 2]);
         }
     }
     processRawToken = ({type: rawType, offset}: monaco.Token, line: number, value: string | number) => {
@@ -724,17 +726,17 @@ class JSInerpreter {
         }
         return {type, line, offset, value};
     }
-    getCompilationError = (msg: string, token: IToken) => {
-        return new DebugError(msg || 'שגיאה בעיבוד הקוד', token);
+    getCompilationError = (msg: ITextData, token: IToken) => {
+        return new DebugError(msg || {text: TextCodes.parseError}, token);
     }
     compileStatement = (idx: number, endDelimiters: TokenType[] = [TokenType.Semicolon]): ICompResult => {
         const statementStack: IStatement[] = [];
         const operationStack: IToken[] = [];
         const isExpectingArgument = () => !!statementStack.length == !!operationStack.length; // TODO - do we need the !! ?
-        const getStatement = (errToken: IToken, errMsg: string = 'TODO') => {
+        const getStatement = (errToken: IToken) => {
             const result = statementStack.pop();
             if (!result) {
-                throw this.getCompilationError(errMsg, errToken);
+                throw this.getCompilationError({text: TextCodes.oops}, errToken);
             }
             return result;
         }
@@ -748,7 +750,7 @@ class JSInerpreter {
             if (!op.isUnary) {
                 left = statementStack.pop();
                 if (!left) {
-                    throw this.getCompilationError('אמור לבוא פרמטר אחרי האופרטור', op);
+                    throw this.getCompilationError({text: TextCodes.expectingParam}, op);
                 }
             }
             let result: IStatement;
@@ -766,10 +768,10 @@ class JSInerpreter {
             while (wrapOperation()) {}
             let result = statementStack.pop();
             if (statementStack.length > 1) {
-                throw this.getCompilationError('', errToken);
+                throw this.getCompilationError({text: TextCodes.TODO}, errToken);
             }
             if (!result) {
-                throw this.getCompilationError('', errToken);
+                throw this.getCompilationError({text: TextCodes.TODO}, errToken);
             }
             return result;
         }
@@ -782,7 +784,7 @@ class JSInerpreter {
             if (tokens[idx].line !== nextToken.line) {
                 return idx + 1;
             }
-            throw this.getCompilationError('יש לסיים את הפעולה עם ; או שורה חדשה', nextToken);
+            throw this.getCompilationError({text: TextCodes.invalidStatementEnd}, nextToken);
         }
         const {tokens} = this;
         if (this.getType(idx) === TokenType.CurlyOpen) {
@@ -838,7 +840,7 @@ class JSInerpreter {
                         // TODO - support (function(){})()
                         let func = statementStack.pop();
                         if (!func) { // TODO - check for callable types
-                            throw this.getCompilationError('', token);
+                            throw this.getCompilationError({text: TextCodes.TODO}, token);
                         }
                         let args: IStatement[];
                         [args, nextIdx] = this.compileArgsList(i);
@@ -887,7 +889,7 @@ class JSInerpreter {
                     continue;
             }
         }
-        throw this.getCompilationError('TODO - shouldnt get here', token);
+        throw this.getCompilationError({text:TextCodes.parseError}, token);
     }
     getType = (idx: number): TokenType | undefined => {
         let token = this.tokens[idx];
@@ -897,7 +899,7 @@ class JSInerpreter {
         let token = this.tokens[i];
         const types = Array.isArray(type) ? type : [type];
         if (!token || !types.includes(token.type)) {
-            throw this.getCompilationError('TODO Expecting type', token);
+            throw this.getCompilationError({text:TextCodes.parseError}, token);
         }
     }
     compileBlock = (idx: number): ICompResult<Block> => {

@@ -2,10 +2,11 @@ import React from 'reactn';
 import { Tabs, Button } from 'antd';
 const { TabPane } = Tabs;
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
-import { DebugExecution } from '../../services/debugger';
+import { DebugExecution, ITextData } from '@services/debugger';
 
 import './styles.scss';
-import { IConsoleItem } from 'src/services/class-data';
+import { IConsoleItem } from '@services/class-data';
+import { translate } from '@components/Trans';
 
 interface IProps {
     value?: string;
@@ -153,7 +154,7 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             }
         ]);
     }
-    debugAnnotationCallback = (line: number, start: number, end: number, msg: string, isException: boolean = false) => {
+    debugAnnotationCallback = (line: number, start: number, end: number, msg: ITextData, isException: boolean = false) => {
         this.debugVariableDecorations = this._editor.deltaDecorations(this.debugVariableDecorations, [
             {
                 range: new monaco.Range(line+1, start+1, line+1, end+1),
@@ -169,7 +170,8 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             this._editor.removeContentWidget(this.debugContentWidget);
             this.debugContentWidget = null;
         }
-        this._editor.addContentWidget(this.debugContentWidget = new DebugWidget(msg, line+1, start+1, isException));
+        const msgText = translate(msg.text, this.global.language.code, msg.params);
+        this._editor.addContentWidget(this.debugContentWidget = new DebugWidget(msgText, line+1, start+1, isException));
     }
     clearDebugDecorations = () => {
         this.debugLineHighlight = this._editor.deltaDecorations(this.debugLineHighlight, []);
