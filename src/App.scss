@@ -12,6 +12,10 @@ $headerHeight: 55px;
         }
         .app-title {
             margin: 0 10px;
+            flex-grow: 1;
+        }
+        .lang-select {
+            margin: 0 10px;
         }
     }
     .app-body {

@@ -1,0 +1,40 @@
+- solve production webpack
+
+- 'upload'
+- solve rerendering of codeeditor
+- download / load
+
+drafts section
+
+if no breakpoints - step to step
+
+exceptions - 
+
+debugger:
+- variable states
+- sandbox document wrapper
+- step in
+- Add:
+    ++a , --a
+    setTimeout, setInterval
+    () - improve allow only arithmetic expressions and function definitions
+    scoping of named functions - like var
+    objects, array, references to arrays
+    brackets accessor
+    switch
+    this
+    default args values
+    anonymous functions
+    DOM manipulation
+    try catch
+    trenary operator
+    empty curly
+- going backwords
+testing:
+- anonymous function call
+
+compilation scopes - when compiling holds variable declarations and references
+upon execution
+window and document:
+dom proxy
+need to perform garbage collection on unused 

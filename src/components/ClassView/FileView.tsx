@@ -1,6 +1,7 @@
 import React, {useGlobal} from 'reactn';
 import { useRef, useEffect, useCallback } from 'react';
 import { Typography } from 'antd';
+import { translate, TextCodes } from '@components/Trans';
 const { Title } = Typography;
 const frameStyleUrl = require('@assets/content.css');
 
@@ -9,6 +10,8 @@ export const FileView = () => {
     const [files] = useGlobal('files');
     const [_loadedData, setLoadedData] = useGlobal('loadedData');
     const frameRef = useRef<HTMLIFrameElement>();
+    const [language] = useGlobal('language');
+    const loadText = translate(TextCodes.load, language.code);
     useEffect(() => {
         const fileData = selectedFile && files && files[selectedFile.key] || '';
         const {body} = frameRef.current.contentDocument;
@@ -20,7 +23,7 @@ export const FileView = () => {
             const contents = block.querySelectorAll('div[data-language]');
             const data = JSON.parse(decodeURIComponent(block.getAttribute('data-value')));
             const langs = Object.keys(data);
-            let html = '<button>טען</button>';
+            let html = `<button>${loadText}</button>`;
             const useTabs = langs.length > 1;
             if (useTabs) {
                 html = `<div class="tabs">${
