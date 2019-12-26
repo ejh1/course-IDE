@@ -2,11 +2,12 @@ import React from 'reactn';
 import { Tabs, Button } from 'antd';
 const { TabPane } = Tabs;
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
-import { DebugExecution, ITextData } from '@services/debugger';
+import { DebugExecution, ITextData, JSInterpreter } from '@services/debugger';
 
 import './styles.scss';
 import { IConsoleItem } from '@services/class-data';
 import { translate } from '@components/Trans';
+import { SandboxComm, SandboxMsgType, IDebugNextData, IDebugMsgData } from '@services/SandboxComm';
 
 interface IProps {
     value?: string;
@@ -15,20 +16,22 @@ interface IProps {
 }
 interface IState {
     chosenTabIndex: number;
-    debugger?: DebugExecution;
+    debugging: boolean;
 }
 export default class CodeEditor extends React.Component<IProps, IState> {
     state: IState = {
-        chosenTabIndex: 0
+        chosenTabIndex: 0,
+        debugging: false
     };
     anyBreakpoints: boolean = false;
-    breakpointLines: {[key: number]: boolean} = {};
+    breakpointLines: Record<number, boolean> = {};
     breakpointDecorations: string[] = [];
     debugLineHighlight: string[] = [];
     debugVariableDecorations: string[] = [];
     editorContainer: HTMLDivElement;
     gotDebugError: boolean  = false;
     debugContentWidget: monaco.editor.IContentWidget;
+    sandboxComm: SandboxComm;
     setRef = (element: HTMLDivElement) => {
         this.editorContainer = element;
         const { value, options} = this.props;
@@ -70,7 +73,7 @@ export default class CodeEditor extends React.Component<IProps, IState> {
 
     _editor: monaco.editor.IStandaloneCodeEditor = null;
 
-    tabs: {name: string, lang: string, model?: monaco.editor.ITextModel, viewState?: any}[] = [
+    tabs: {name: string, lang: 'javascript' | 'html' | 'css', model?: monaco.editor.ITextModel, viewState?: any}[] = [
         {name: 'JavaScript', lang: 'javascript'},
         {name: 'HTML', lang: 'html'},
         {name: 'CSS', lang: 'css'}
@@ -85,12 +88,39 @@ export default class CodeEditor extends React.Component<IProps, IState> {
         this._editor.setModel(tab.model);
         tab.viewState && this._editor.restoreViewState(tab.viewState);
     }
+    startSandbox = () => {
+        this.setGlobal({sandboxCounter: Math.random()});
+        if (this.sandboxComm) {
+            this.sandboxComm.dispose();
+        }
+        this.sandboxComm = new SandboxComm(this.sandboxCallback, (document.querySelector('#sandbox-frame') as any).contentWindow);
+    }
+    sandboxCallback = (type: SandboxMsgType, data: any) => {
+        switch (type) {
+            case SandboxMsgType.CONSOLE:
+                this.dispatch.consolePush(data as IConsoleItem);
+                break;
+            case SandboxMsgType.DEBUG_STEP: {
+                const {line, offset} = data;
+                this.debugStepCallback(line, offset);
+                break;
+            }
+            case SandboxMsgType.DEBUG_ANNOTATION: {
+                const {line, start, end, msg, isException} = data;
+                this.debugAnnotationCallback(line, start, end, msg, isException);
+                break;
+            }
+        }
+        console.log(type, data);
+    }
+    getExecutionData = () => this.tabs.reduce((acc: {[key: string]: string}, {lang, model}) => {
+        acc[lang] = (model as monaco.editor.ITextModel).getValue();
+        return acc;
+    }, {});
     execute = () => {
-        const executionData: {} = this.tabs.reduce((acc: {[key: string]: string}, {lang, model}) => {
-            acc[lang] = (model as monaco.editor.ITextModel).getValue();
-            return acc;
-        }, {});
-        this.setGlobal({executionData});
+        this.startSandbox();
+        const executionData: {} = this.getExecutionData();
+        this.sandboxComm.send(SandboxMsgType.RUN, executionData);
     }
     onEditorMouseDown = (event: monaco.editor.IEditorMouseEvent) => {
         if (this.state.chosenTabIndex !== 0) {
@@ -105,6 +135,9 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             } else {
                 breakpointLines[line] = true;
             }
+            if (this.sandboxComm) {
+                this.sandboxComm.send(SandboxMsgType.SET_BREAKPOINTS, breakpointLines);
+            }
             const lines = Object.keys(breakpointLines);
             this.anyBreakpoints = !!lines.length;
             this.breakpointDecorations = this._editor.deltaDecorations(this.breakpointDecorations,
@@ -117,31 +150,15 @@ export default class CodeEditor extends React.Component<IProps, IState> {
         }
     }
     debug = () => {
-        this.setGlobal({console:[]});// Clear console
-        if (this.state.debugger) {
-            this.stopDebugging(undefined,this.debug);
-        }
+        this.startSandbox();
+        this.setState({debugging: true});
+        const data: IDebugMsgData = this.getExecutionData() as unknown as IDebugMsgData;
         const {model} = this.tabs[0];
-        this.setState({
-            debugger: new DebugExecution(model!, this.debugStepCallback,
-                this.debugAnnotationCallback, this.debugNativeCallback, this.breakpointLines)
-        });
+        data.tokens = JSInterpreter.tokenize(model.getLinesContent());
+        data.breakpointLines = this.breakpointLines;
+        
+        this.sandboxComm.send(SandboxMsgType.DEBUG, data);
         this._editor.updateOptions({readOnly:true});
-    }
-    debugNativeCallback = (key: string, args: any[] = []) => {
-        switch (key) {
-            case 'console.log':
-                const [msg, ...otherArgs] = args;
-                const record: IConsoleItem = {
-                    type: 'log',
-                    msg
-                };
-                otherArgs.length && (record.otherArgs = otherArgs);
-                this.dispatch.consolePush(record);
-                break;
-            default:
-                throw new Error('Unknown native func: ' + key);
-        }
     }
     debugStepCallback = (line: number, offset: number) => {
         this.debugLineHighlight = this._editor.deltaDecorations(this.debugLineHighlight, [
@@ -154,7 +171,7 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             }
         ]);
     }
-    debugAnnotationCallback = (line: number, start: number, end: number, msg: ITextData, isException: boolean = false) => {
+    debugAnnotationCallback = (line: number, start: number, end: number, msg: ITextData, isException: boolean) => {
         this.debugVariableDecorations = this._editor.deltaDecorations(this.debugVariableDecorations, [
             {
                 range: new monaco.Range(line+1, start+1, line+1, end+1),
@@ -186,16 +203,17 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             return this.stopDebugging();
         }
         this.clearDebugDecorations();
-        this.state.debugger && this.state.debugger.nextStep(allTheWay);
+        this.sandboxComm.send(SandboxMsgType.DEBUG_NEXT, allTheWay as IDebugNextData);
     }
-    stopDebugging = (event?: any, callback?: () => any) => {
+    stopDebugging = () => {
+        this.setState({debugging: false});
         this.gotDebugError = false;
         this._editor.updateOptions({readOnly:false});
         this.clearDebugDecorations();
-        const {debugger: deb} = this.state;
-        if (deb) {
-            deb.dispose();
-            this.setState({debugger:null}, callback);
+        if (this.sandboxComm) {
+            this.sandboxComm.send(SandboxMsgType.DEBUG_STOP);
+            this.sandboxComm.dispose();
+            this.sandboxComm = null;
         }
     }
     render() {
@@ -204,7 +222,7 @@ export default class CodeEditor extends React.Component<IProps, IState> {
                 activeKey={this.tabs[this.state.chosenTabIndex].name}
                 className="ce-tabs"
                 onChange={this.tabChanged} type="card"
-                tabBarExtraContent={this.state.debugger ?(
+                tabBarExtraContent={this.state.debugging ?(
                     <React.Fragment>
                         <Button onClick={this.stopDebugging} icon="stop" shape="circle"/>
                         <Button onClick={this.debugStep.bind(this, false)} icon="step-forward" shape="circle"/>
@@ -237,7 +255,7 @@ class DebugWidget {
     getDomNode = () => {
         if (!this.domNode) {
             const div = this.domNode = document.createElement('div');
-            div.innerHTML = this.message;
+            div.textContent = this.message;
             div.className = 'debug-widget' + (this.isError ? ' error' : '');
         }
         return this.domNode;

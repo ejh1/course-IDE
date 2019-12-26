@@ -1,10 +1,24 @@
 import { addReducers, setGlobal } from 'reactn';
-import { object } from 'prop-types';
+import firebase from 'firebase/app';
+import 'firebase/auth';
+import 'firebase/firestore';
+
+const firebaseConfig = {
+    apiKey: "AIzaSyDvSrdLS9tjp7_SINpB4YWDnYaJXT7Gr20",
+    authDomain: "course-ide.firebaseapp.com",
+    databaseURL: "https://course-ide.firebaseio.com",
+    projectId: "course-ide",
+    storageBucket: "course-ide.appspot.com",
+    messagingSenderId: "2469232450",
+    appId: "1:2469232450:web:66c0b72981410df02bd2db"
+  };
+const app = firebase.initializeApp(firebaseConfig);
 const CLASSES_BASE_PATH = 'https://firebasestorage.googleapis.com/v0/b/course-ide.appspot.com/o/';
 
 export interface IFile {
     name: string;
     key: string;
+    forInstructors: boolean;
 }
 export interface IFolder {
     children: IFile[];
@@ -29,9 +43,12 @@ export const languages: ILanguage[] = [
 ];
 const defaultLanguage = languages[0];
 export interface IConsoleItem {
-    type: 'log'|'error'|'warn';
+    type: keyof Console;
     msg: any;
     otherArgs?: any[];
+}
+export interface IUserData {
+    isInstructor: boolean;
 }
 export const isFolder = (key: string) => key.endsWith('.json');
 let initialized = false;
@@ -48,6 +65,8 @@ const fetchFile = async (file: string) => {
     const response = await fetch(`${CLASSES_BASE_PATH}${encodeURIComponent(file)}?alt=media`);
     return response.ok ? response.text() : '';
 }
+export const login = () => app.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());
+export const logout = () => firebase.auth().signOut();
 export const initializeGlobalState = () => {
     if (initialized) {
         console.error('Already initialized');
@@ -59,8 +78,23 @@ export const initializeGlobalState = () => {
         files: {},
         console: [],
         language: defaultLanguage
-    });    
+    });
     addReducers({
+        checkLogin: (global, dispatch) => {
+            firebase.auth().onAuthStateChanged(dispatch.setUser);
+        },
+        setUser: async (global, dispatch, user: firebase.User) => {
+            if (user) {
+                const instructor = await firebase.firestore().collection('instructors').doc(user.uid).get();
+                dispatch.setUserData({isInstructor: !!instructor.data()});
+            } else {
+                dispatch.setUserData(null);
+            }
+            return {user};
+        },
+        setUserData: (global, dispatch, userData: IUserData) => {
+            return {userData};
+        },
         setSelectedFile: (_global, _dispatch, selectedFile: IFile) => ({selectedFile}),
         selectFile: async (global, dispatch, file: IFile) => {
             dispatch.setSelectedFile(file);

@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+  <head>
+      <meta charset="utf-8">
+      <title>sandbox</title>
+      <script>
+        window.isSandbox = true;
+        // Hack - for some reason when running this from within bundled code, error is masked
+        window.runScript = (code) => new Function(code)();
+      </script>
+  </head>
+  <body>
+  </body>
+</html>

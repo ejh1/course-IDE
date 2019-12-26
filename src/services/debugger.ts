@@ -125,7 +125,7 @@ const getPriority = (type: TokenType): number => {
     }
     return 0;
 }
-interface IToken {
+export interface IToken {
     type: TokenType;
     line: number;
     offset: number;
@@ -134,47 +134,60 @@ interface IToken {
 }
 interface IStatement {
     token: IToken;
-    execute: (scope: IScope) => any;
+    execute: (scope: IScope, context?: any) => any;
+    toString: () => string;
+    isBlockStatement?: () => boolean;
 }
-interface IVariableState {
+class VariableState {
     declaredType?: TokenType;
     identifier: IToken;
     value?: any;
+    constructor(declaredType: TokenType, identifier: IToken, value?: any) {
+        Object.assign(this, {declaredType, identifier, value});
+    }
 }
 export type ITextData = {
-    text?: TextCodes;
-    params?: Record<string, string>;
+    text: TextCodes;
+    params?: Record<string, string | number>;
 }
-export class DebugExecution {
+const createText = (text: TextCodes, params?: ITextData['params']) => ({text, params});
+export interface IDebugCallbacks {
+    debugStepCallback: (line: number, offset: number) => void;
+    debugAnnotationCallback: (line: number, start: number, end: number, msg: ITextData, isException: boolean) => void;
+}
+export class DebugExecution implements IDebugCallbacks {
     clearNext?: () => void;
-    stepCallback: (line: number, offset: number) => void;
-    annotationCallback: (line: number, start: number, end: number, msg: ITextData, isError?: boolean) => void;
+    debugStepCallback: IDebugCallbacks['debugStepCallback'];
+    debugAnnotationCallback: IDebugCallbacks['debugAnnotationCallback'];
     executionAborted: boolean = false;
     breakpointLines: {[key: number]: boolean};
     stepByStep: boolean;
     lastNotificationToken: IToken;
-    constructor(model: monaco.editor.ITextModel, callback: DebugExecution['stepCallback'],
-        anotCB: DebugExecution['annotationCallback'], nativeCallback: (key: string, args: any[]) => any,
+    globalScope: GlobalScope;
+    constructor(tokens: IToken[], callback: IDebugCallbacks['debugStepCallback'],
+        anotCB: IDebugCallbacks['debugAnnotationCallback'],
         breakpointLines: DebugExecution['breakpointLines'])
     {
-        this.stepCallback = callback;
-        this.annotationCallback = anotCB;
+        this.debugStepCallback = callback;
+        this.debugAnnotationCallback = anotCB;
         this.breakpointLines = breakpointLines;
         this.stepByStep = !Object.keys(breakpointLines).length;
         try {
-            const interpreter = new JSInerpreter(model);
+            const interpreter = new JSInterpreter(tokens);
             const topBlock = interpreter.top;
-            topBlock.execute(new Scope(new GlobalScope(this, nativeCallback))).catch(this.handleError);
+            this.globalScope = new GlobalScope(this);
+            topBlock.execute(new Scope(this.globalScope), () => this.stepByStep = false).catch(this.handleError);
         } catch (err) {
             this.handleError(err);
         }
     }
+    setBreakpoinLines = (breakpointLines: DebugExecution['breakpointLines']) => this.breakpointLines = breakpointLines
     handleError = (err: Error) => {
         if (err instanceof DebugError) {
             const {msg, token: {line, offset, value = ' '}} = err as DebugError;
-            this.annotationCallback(line, offset, offset + (value as string).length, msg, true);
+            this.debugAnnotationCallback(line, offset, offset + (value as string).length, msg, true);
         } else {
-            this.annotationCallback(0, 0, 0, {text: TextCodes.oops}, true);
+            this.debugAnnotationCallback(0, 0, 0, {text: TextCodes.oops}, true);
             console.error(err);
         }
         this.executionAborted = true;
@@ -196,7 +209,7 @@ export class DebugExecution {
         }
         const {line, offset} = token;
         if (this.executionAborted || this.stepByStep || this.breakpointLines[line]) {
-            this.stepCallback(line, offset);
+            this.debugStepCallback(line, offset);
             return new Promise((res) => {
                 this.clearNext = res;
             })
@@ -208,13 +221,18 @@ export class DebugExecution {
         if (this.stepByStep) {
             this.lastNotificationToken = token;
             const {line, offset, value: tValue} = token;
-            this.annotationCallback(line, offset, offset + (tValue as string).length, msg);
+            this.debugAnnotationCallback(line, offset, offset + (tValue as string).length, msg, false);
         }
     }
     setValue = (token: IToken, oldValue: any, value: any): void => {
-        console.log(`${token.value}: ${oldValue} => ${value}`);
+        // console.log(`${token.value}: ${oldValue} => ${value}`);
     }
-    dispose = (): void => this.clearNext = null;
+    dispose = (): void => {
+        const {globalScope} = this;
+        globalScope.dispose();
+        this.globalScope = null;
+        this.clearNext = null;
+    }
 }
 interface IScope {
     get: (identifier: IToken) => any;
@@ -222,7 +240,6 @@ interface IScope {
     set: (key: string, value: any, identifier: IToken, declaredType?: TokenType) => void;
     notify: (token: IToken, message: ITextData) => void;
     getException: (token: IToken, message: ITextData) => Error;
-    variables: {[key: string]: IVariableState};
     global: IScope;
     execution: DebugExecution;
     parent?: IScope;
@@ -230,60 +247,31 @@ interface IScope {
 class GlobalScope implements IScope {
     global: IScope;
     execution: IScope['execution'];
-    variables: IScope['variables'];
-    constructor(execution: IScope['execution'], nativeCallback: (key: string, args: any[]) => any) {
+    constructor(execution: IScope['execution']) {
         this.execution = execution;
         this.global = this;
-        this.variables = {
-            console : {
-                identifier: null,
-                value : {
-                    log: new FunctionProxy((...args: any[]) => nativeCallback('console.log', args))
-                }
-            }
-        }
     }
     get = (identifier: IToken) => {
+        // It should only be accessed by descendant scopes
         throw new Error('global get should not be called ' + identifier);
     }
-    _get = (key: string): IVariableState => {
-        let result = this.variables[key];
-        if (!result) {
-            const native = window[key as any];
-            if (typeof native === 'function') {
-                return {
-                    identifier: null,
-                    value: new FunctionProxy((native as Function).bind(window))
-                };
-            }
-        }
-        return result;
-    }
+    _get = (key: string): any => (window as any)[key]
     set = (key: string, value: any, identifier: IToken, declaredType?: TokenType): void => {
-        let oldValue;
-        let variable = this.variables[key];
-        if (variable) {
-            oldValue = variable.value;
-            variable.value = value;
-        } else {
-            variable = this.variables[key] = {
-                identifier,
-                value
-            }
-        }
-        this.execution.setValue(variable.identifier, oldValue, value);
+        const oldValue = (window as any)[key];
+        (window as any)[key] = value;
+        this.execution.setValue(identifier, oldValue, value);
     }
     notify = (...args: Parameters<IScope['notify']>) => this.execution.notify(...args);
     getException = (...args: Parameters<IScope['getException']>) => this.execution.getException(...args);
     dispose = () => {
-        this.global = this.variables = this.execution = null;
+        this.global = this.execution = null;
     }
 }
 class Scope implements IScope {
     parent?: IScope['parent'];
     execution: IScope['execution'];
     isFunctionScope: boolean;
-    variables: IScope['variables'] = {};
+    variables: Record<string, VariableState> = {};
     global: IScope;
 
     constructor(parent: IScope, isFunctionScope = false) {
@@ -292,46 +280,40 @@ class Scope implements IScope {
         this.global = parent.global;
         this.isFunctionScope = isFunctionScope;
     }
-    _get = (key: string): IVariableState | null => this.variables[key] || this.parent._get(key);
+    _get = (key: string): any => this.variables[key] || this.parent._get(key);
     get = (identifier: IToken) => {
         const key = identifier.value as string;
         const variable = this._get(key);
-        if (variable) {
+        if (variable instanceof VariableState) {
             return variable.value;
-        } else {
-            throw this.getException(identifier, {text: TextCodes.undefined_var, params: {var: key}});
         }
+        if (variable === undefined) {
+            throw this.getException(identifier, createText(TextCodes.undefined_var, {var: key}));
+        }
+        return variable;
     }
     set = (key: string, value: any, identifier: IToken, declaredType?: TokenType): void => {
-        let variable: IVariableState = this._get(key);
-        if (variable) {
-            if (declaredType && this.variables[key]) { // TODO - differentiate between var and let/const
+        const myVariable = this.variables[key];
+        const variable = myVariable || this._get(key);
+        if (variable instanceof VariableState) { // Already defined
+            if (declaredType && myVariable) { // TODO - differentiate between var and let/const
                 throw this.getException(identifier, {text: TextCodes.alreadyDefined_var, params: {var: identifier.value.toString()}});
-            } else if (variable.declaredType === TokenType.Const) {
-                throw this.getException(identifier, {text: TextCodes.constChange});
-            } else {
-                this.execution.setValue(variable.identifier, variable.value, value);
-                variable.value = value;
             }
+            if (variable.declaredType === TokenType.Const) {
+                throw this.getException(identifier, {text: TextCodes.constChange});
+            }
+            this.execution.setValue(variable.identifier, variable.value, value);
+            variable.value = value;
         } else if (declaredType) {
             this.execution.setValue(identifier, undefined, value);
             // TODO - if var/function => set in closest function/global scope
-            this.variables[key] = {identifier, declaredType, value};
+            this.variables[key] = new VariableState(declaredType, identifier, value);
         } else { // Global variable
             this.global.set(key, value, identifier);
         }
     }
     notify = (...args: Parameters<IScope['notify']>) => this.execution.notify(...args);
     getException = (...args: Parameters<IScope['getException']>) => this.execution.getException(...args);
-}
-class FunctionProxy implements IStatement {
-    token: IToken; // Dummy
-    execute: IStatement['execute']; // Dummy
-    callback: Function;
-    constructor(callback: FunctionProxy['callback']) {
-        this.callback = callback;
-    }
-    executeFunction: FunctionDef['executeFunction'] = (scope, ...args) => this.callback(...args);
 }
 class Variable implements IStatement {
     token: IToken;
@@ -341,6 +323,7 @@ class Variable implements IStatement {
     execute = async (scope: IScope) => {
         return scope.get(this.token);
     }
+    toString = () => this.token.value.toString()
 }
 class NativeValue implements IStatement {
     token: IToken;
@@ -378,6 +361,7 @@ class Assignment implements IStatement {
         }
         const key = left.token.value as string;
         let returnVal = val;
+        const displayVal = (str: string) => typeof str === 'string' ? `"${str}"` : str;
         if (type === TokenType.Assign) {
             if (declaredType || left instanceof Variable) {
                 scope.set(key, val, left.token, declaredType);
@@ -387,8 +371,7 @@ class Assignment implements IStatement {
                 throw scope.getException(token, {text: TextCodes.oops});
             }
             if (![TokenType.Number, TokenType.String].includes(right.token.type)) {
-                const displayVal = typeof val === 'string' ? `"${val}"` : val;
-                scope.notify(left.token, {text: TextCodes.assign_val, params:{val:displayVal}});
+                scope.notify(left.token, {text: TextCodes.assign_val, params:{val:displayVal(val)}});
             }
         } else { // Relative assignment
             let oldVal = left instanceof Variable ? scope.get(left.token) : await left.execute(scope);
@@ -424,10 +407,11 @@ class Assignment implements IStatement {
             } else {
                 throw scope.getException(token, {text: TextCodes.oops});
             }
-            scope.notify(token, {text:TextCodes.valChanged_val, params: {val: newVal}});
+            scope.notify(token, {text:TextCodes.valChanged_val, params: {val: displayVal(newVal)}});
         }
         return returnVal;
     }
+    isBlockStatement = () => !!this.right && !!this.right.isBlockStatement && this.right.isBlockStatement()
 }
 class FunctionCall implements IStatement {
     token: IToken; // token of (
@@ -437,9 +421,18 @@ class FunctionCall implements IStatement {
         Object.assign(this, {token, func, args});
     }
     execute = async (scope: IScope) => {
-        const funcS: FunctionDef = await this.func.execute(scope);
+        const {func} = this;
+        const thisRef: any[] = [];
+        const funcS: FunctionDef = await func.execute(scope, thisRef);
         let args = await Promise.all(this.args.map(arg => arg.execute(scope)));
-        return await funcS.executeFunction(scope, args);
+        if (funcS instanceof FunctionDef) {
+            return await funcS.executeFunction(scope, args);
+        }
+        if (typeof funcS === 'function') {
+            return (funcS as Function).apply(thisRef[0], args);
+        } else {
+            throw scope.getException(func.token, createText(TextCodes.notAFunction_val, {val: func.toString()}))
+        }
     }
 }
 class FunctionDef implements IStatement {
@@ -453,18 +446,26 @@ class FunctionDef implements IStatement {
     }
     execute = async (scope: IScope): Promise<IStatement> => {
         const {identifier} = this;
-        scope.set(identifier.value as string, this, identifier);
         this.closure = scope;
-        return this;
+        // Return a function that can be called independently (when attached as an event handler)
+        // But still has instanceof FunctionDef === true
+        // TODO - if there is event.stopProp.. or preventDefault, execute it immediately
+        const thisAsFunc = (...args: any[]) => this.executeFunction(this.closure, args);
+        Object.setPrototypeOf(thisAsFunc, this);
+        if (identifier) { // If not an anonymous function
+            // TODO - only if not assigned
+            scope.set(identifier.value as string, thisAsFunc, identifier);
+        }
+        return thisAsFunc as unknown as IStatement;
     }
     executeFunction = async (scope: IScope, args: any[]) => {
         let funcScope = new Scope(this.closure, true);
         this.args.forEach(({token}, idx) => {
             funcScope.set(token.value as string, args[idx], token, TokenType.Let);
         });
-        if (args.length) {
-            scope.notify(this.identifier, {text:TextCodes.functionCall_vals, params: {vals: args.map((value, idx) => 
-                `${this.args[idx].token.value}:${value}`
+        if (this.args.length) {
+            scope.notify(this.identifier || this.token, {text:TextCodes.functionCall_vals, params: {vals: this.args.map((arg, idx) => 
+                `${arg.token.value}:${args[idx]}`
             ).join(';')}})
         }
         const result = await this.body.execute(funcScope);
@@ -472,6 +473,7 @@ class FunctionDef implements IStatement {
             return result.value;
         }
     }
+    isBlockStatement = () => true;
 }
 class Return implements IStatement {
     token: IToken;
@@ -511,6 +513,7 @@ class If implements IStatement {
             return elseStatement && await elseStatement.execute(scope);
         }
     }
+    isBlockStatement = () => true;
 }
 class Loop implements IStatement {
     token: IToken;
@@ -543,6 +546,7 @@ class Loop implements IStatement {
             }
         }
     }
+    isBlockStatement = () => true;
 }
 class EndLoopRun implements IStatement {
     token: IToken;
@@ -563,7 +567,7 @@ class Block implements IStatement {
         this.token = token;
         this.statements = statements;
     }
-    execute = async (scope: IScope): Promise<ReturnValue | EndLoopRun | void> => {
+    execute = async (scope: IScope, endCallback?: () => void): Promise<ReturnValue | EndLoopRun | void> => {
         const blockScope = new Scope(scope);
         let result, statement;
         for (let i = 0; i < this.statements.length; i++) {
@@ -576,8 +580,10 @@ class Block implements IStatement {
         }
         // If last statement issued a notification, hang on there
         await scope.execution.mayIExecute();
+        endCallback && endCallback();
         return result;
     }
+    isBlockStatement = () => true
 }
 class DotStatement implements IStatement {
     token: IToken;
@@ -588,18 +594,25 @@ class DotStatement implements IStatement {
         this.left = left;
         this.right = right;
     }
-    execute = async (scope: IScope) => {
+    execute = async (scope: IScope, leftValRef?: any[]) => {
         const {left, right} = this;
-        const leftVal = await left.execute(scope);
-        // TODO - handle errors
+        const leftVal = left.execute ? await left.execute(scope) : left;
+        if (leftVal === undefined || leftVal === null) { // TODO - any other cases?
+            throw scope.getException(right,
+                createText(leftVal === null ? TextCodes.nullHasNoProp_name_prop : TextCodes.undefinedHasNoProp_name_prop, {name: left.toString(), prop: right.value}))
+        }
+        if (leftValRef) {
+            leftValRef[0] = leftVal;
+        }
         return leftVal[right.value as string];
     }
     assign = async (scope: IScope, value: any) => {
         const {left, right} = this;
-        const leftVal = await left.execute(scope);
+        const leftVal = left.execute ? await left.execute(scope) : left;
         // TODO - handle errors
         return leftVal[right.value] = value;
     }
+    toString = () => `${this.left.toString()}.${this.right.value}`;
 }
 class OperationStatement implements IStatement {
     token: IToken;
@@ -653,50 +666,47 @@ class DebugError extends Error {
     }
 }
 type ICompResult<T = IStatement> = [T, number];
-class JSInerpreter {
-    lines: string[];
+export class JSInterpreter {
     tokens: IToken[];
     top: Block;
     error: {msg: string, token:IToken};
 
-    constructor(model: monaco.editor.ITextModel) {
-        this.lines = model.getLinesContent();
-        this.tokens = [{
+    static tokenize = (lines: string[]) => {
+        const tokens: JSInterpreter['tokens'] = [{
             type: TokenType.CurlyOpen,
             line: 0,
             offset: 0
         }];
-        const lineTokens = monaco.editor.tokenize(model.getValue(), 'javascript');
-        // Filter whitespace tokens
+        const lineTokens = monaco.editor.tokenize(lines.join('\n'), 'javascript');
         const tokensWLines: [monaco.Token, number][] = [];
         lineTokens.forEach((lTokens, line) => lTokens.forEach(token => tokensWLines.push([token, line])));
-
+        
+        // Filter whitespace tokens
         tokensWLines.forEach(([token, line], idx) => {
             const {type, offset} = token;
             let [nextToken, nextTokenLine] = tokensWLines[idx + 1] || [];
             if (type && type !== 'comment.js') {
-                const value = this.lines[line].substring(offset, token && (nextTokenLine === line) ? nextToken.offset : undefined);
+                const value = lines[line].substring(offset, token && (nextTokenLine === line) ? nextToken.offset : undefined);
                 // Address what seems like a tokenizer bug
                 if (value === '++;' || value === '--;') {
-                    this.tokens.push(this.processRawToken(token, line, value.substr(0, 2)));
-                    this.tokens.push(this.processRawToken({...token, offset: token.offset + 2}, line, value.substr(2)));
+                    tokens.push(JSInterpreter.processRawToken(token, line, value.substr(0, 2)));
+                    tokens.push(JSInterpreter.processRawToken({...token, offset: token.offset + 2}, line, value.substr(2)));
+                } else if ([')(','))'].includes(value)) {
+                    tokens.push(JSInterpreter.processRawToken(token, line, value.substr(0, 1)));
+                    tokens.push(JSInterpreter.processRawToken({...token, offset: token.offset + 1}, line, value.substr(1)));
                 } else {
-                    this.tokens.push(this.processRawToken(token, line, value));
+                    tokens.push(JSInterpreter.processRawToken(token, line, value));
                 }
             }
         });
-        this.tokens.push({
+        tokens.push({
             type: TokenType.CurlyClose,
             line: -1,
             offset: -1
         });
-        const [top, nextIdx] = this.compileBlock(0);
-        this.top = top;
-        if (this.tokens[nextIdx]) {
-            throw this.getCompilationError({text:TextCodes.parseError}, this.tokens[this.tokens.length - 2]);
-        }
+        return tokens;
     }
-    processRawToken = ({type: rawType, offset}: monaco.Token, line: number, value: string | number) => {
+    static processRawToken = ({type: rawType, offset}: monaco.Token, line: number, value: string | number) => {
         let type: TokenType;
         switch (rawType) {
             case 'keyword.js':
@@ -726,13 +736,22 @@ class JSInerpreter {
         }
         return {type, line, offset, value};
     }
+
+    constructor(tokens: JSInterpreter['tokens']) {
+        this.tokens = tokens;
+        const [top, nextIdx] = this.compileBlock(0);
+        this.top = top;
+        if (this.tokens[nextIdx]) {
+            throw this.getCompilationError({text:TextCodes.parseError}, this.tokens[this.tokens.length - 2]);
+        }
+    }
     getCompilationError = (msg: ITextData, token: IToken) => {
         return new DebugError(msg || {text: TextCodes.parseError}, token);
     }
     compileStatement = (idx: number, endDelimiters: TokenType[] = [TokenType.Semicolon]): ICompResult => {
         const statementStack: IStatement[] = [];
         const operationStack: IToken[] = [];
-        const isExpectingArgument = () => !!statementStack.length == !!operationStack.length; // TODO - do we need the !! ?
+        const isExpectingArgument = () => statementStack.length === operationStack.length;
         const getStatement = (errToken: IToken) => {
             const result = statementStack.pop();
             if (!result) {
@@ -768,10 +787,10 @@ class JSInerpreter {
             while (wrapOperation()) {}
             let result = statementStack.pop();
             if (statementStack.length > 1) {
-                throw this.getCompilationError({text: TextCodes.TODO}, errToken);
+                throw this.getCompilationError({text: TextCodes.parseError}, errToken);
             }
             if (!result) {
-                throw this.getCompilationError({text: TextCodes.TODO}, errToken);
+                throw this.getCompilationError({text: TextCodes.parseError}, errToken);
             }
             return result;
         }
@@ -790,7 +809,7 @@ class JSInerpreter {
         if (this.getType(idx) === TokenType.CurlyOpen) {
             return this.compileBlock(idx);
         }
-        let token;
+        let token: IToken;
         for (let i = idx; i < tokens.length; i++) {
             token = tokens[i];
             if (endDelimiters.includes(token.type)) {
@@ -805,9 +824,14 @@ class JSInerpreter {
                     const nextToken = tokens[i];
                     statementStack.push(new VariableDeclaration(token.type, nextToken));
                     continue;
-                case TokenType.Function:
-                    assertStart();
-                    return this.compileFunction(i);
+                case TokenType.Function: {
+                    const isAssignment = operationStack.length === 1 && operationStack[0].type === TokenType.Assign
+                        && statementStack.length === 1;
+                    isAssignment || assertStart();
+                    const [funcDef, nextIdx] = this.compileFunction(i, endDelimiters);
+                    statementStack.push(funcDef);
+                    return [wrapUp(tokens[nextIdx] || tokens[nextIdx - 1]), nextIdx];
+                }
                 case TokenType.If:
                     return this.compileIf(i);
                 case TokenType.While:
@@ -831,24 +855,30 @@ class JSInerpreter {
                     statementStack.push(new Assignment(token, getStatement(token)));
                     continue;
                 case TokenType.ParenEmpty:
-                case TokenType.ParenOpen:
+                case TokenType.ParenOpen: {
+                    const isEmpty = token.type === TokenType.ParenEmpty;
                     let nextIdx, statement;
-                    // If the (...) is an operation arg
-                    if (token.type !== TokenType.ParenEmpty && operationStack[operationStack.length - 1] === tokens[i-1]) {
-                        [statement, nextIdx] = this.compileStatement(i+1, [TokenType.ParenClose]);
-                    } else {
-                        // TODO - support (function(){})()
-                        let func = statementStack.pop();
-                        if (!func) { // TODO - check for callable types
-                            throw this.getCompilationError({text: TextCodes.TODO}, token);
-                        }
+                    // Function call of last parsed statement
+                    if (statementStack.length > operationStack.length) {
+                        const func = statementStack.pop();
                         let args: IStatement[];
                         [args, nextIdx] = this.compileArgsList(i);
                         statement = new FunctionCall(token, func, args);
+                    } else if (!isEmpty) {
+                        [statement, nextIdx] = this.compileStatement(i + 1, [TokenType.ParenClose]);
+                        // Anonymous function call
+                        if (statement instanceof FunctionDef) {
+                            let args: IStatement[];
+                            [args, nextIdx] = this.compileArgsList(nextIdx);
+                            statement = new FunctionCall(token, statement, args);    
+                        }
+                    } else {
+                        throw this.getCompilationError({text: TextCodes.TODO}, token);
                     }
                     statementStack.push(statement);
                     i = nextIdx - 1;
                     continue;
+                }
                 case TokenType.Number:
                 case TokenType.String:
                     statementStack.push(new NativeValue(token));
@@ -913,8 +943,7 @@ class JSInerpreter {
             statements.push(statement);
             // If block compilation was ended by END
             // TODO - find better way to know if statement ended with '}'
-            const isBlockStatement = statement instanceof Block || statement instanceof FunctionDef
-                || statement instanceof If || statement instanceof Loop;
+            const isBlockStatement = statement.isBlockStatement && statement.isBlockStatement();
             if (this.getType(nextIdx-1) === END && !isBlockStatement) {
                 break;
             }
@@ -939,11 +968,12 @@ class JSInerpreter {
         }
         return [args, nextIdx];
     }
-    compileFunction = (idx: number): ICompResult<FunctionDef> => {
+    compileFunction = (idx: number, endDelimiters: TokenType[]): ICompResult<FunctionDef> => {
         this.assertTokentype(idx, TokenType.Function);
         const {tokens} = this;
         let identifier = tokens[idx+1];
         let argsOpenIdx = idx + 2;
+        // Anonymous function
         if (identifier && identifier.type !== TokenType.Identifier) {
             identifier = undefined;
             argsOpenIdx = idx + 1;
@@ -951,6 +981,10 @@ class JSInerpreter {
         let [args, nextIdx] = this.compileArgsList(argsOpenIdx);
         let block: Block;
         [block, nextIdx] = this.compileBlock(nextIdx);
+        const nextToken = tokens[nextIdx];
+        if (nextToken && endDelimiters.includes(nextToken.type)) {
+            nextIdx++;
+        }
         return [new FunctionDef(tokens[idx], args, block, identifier), nextIdx];
     }
     compileIf = (idx: number): ICompResult<If> => {

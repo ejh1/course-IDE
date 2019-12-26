@@ -1,14 +1,16 @@
 import React, { useGlobal, useDispatch } from 'reactn';
-import { IFile, isFolder, ROOT_FOLDER } from '@services/class-data';
-import { Tree } from 'antd';
+import { isFolder, ROOT_FOLDER } from '@services/class-data';
+import { Tree, Icon } from 'antd';
 import { AntTreeNode } from 'antd/lib/tree';
 
 const { TreeNode, DirectoryTree } = Tree;
 
 export const FolderView = () => {
+    const [userData] = useGlobal('userData');
     const [folders] = useGlobal('folders');
     const selectFile = useDispatch('selectFile');
     const getFolder = useDispatch('getFolder');
+    const {isInstructor} = userData || {};
 
     const loadFolder = (treeNode: AntTreeNode) => {
         const key = treeNode.props.eventKey;
@@ -28,10 +30,13 @@ export const FolderView = () => {
     }
     const displayFolder = (key: string) => {
         const folder = folders[key];
-        return folder && folder.children.map(({key, name}) => isFolder(key) ? 
-            <TreeNode title={name} key={key} loadData={loadFolder}>{displayFolder(key)}</TreeNode> :
-            <TreeNode title={name} key={key} isLeaf/>
-        );
+        return folder && folder.children.filter(({forInstructors}) => !forInstructors || isInstructor)
+            .map(({key, name, forInstructors}) => {
+            const props = {key, title: forInstructors ? <>{name} <Icon type="solution" /></> : name};
+            return isFolder(key) ?
+                <TreeNode {...props} loadData={loadFolder}>{displayFolder(key)}</TreeNode> :
+                <TreeNode {...props} isLeaf/>;
+        });
     }
     return <DirectoryTree
             loadData={loadFolder}
