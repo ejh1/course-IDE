@@ -3,6 +3,10 @@ import { ReactElement } from 'react';
 
 export enum TextCodes {
     appTitle,
+    login,
+    logout,
+    code,
+    join,
     load,
     oops,
     parseError,
@@ -27,6 +31,10 @@ export enum TextCodes {
 // code_key -> 'blah bla {key}'
 const translations: {[key in keyof typeof TextCodes]: {[code: string]: string}} = {
     appTitle : {he: 'קורס פיתוח אפליקציות ב- Javascript', ar: 'دورة تطوير تطبيق Javascript'},
+    login: {he: 'התחברות', ar: 'دخول'},
+    logout: {he: 'יציאה', ar: 'خروج'},
+    code: {he: 'קוד שיעור', ar: 'كود الدرس'},
+    join: {he: 'הצטרפות', ar: 'انضمام'},
     load : {he: 'טען', ar: 'حمل'},
     oops : {he: 'אופס, קרתה שגיאה', ar: 'عفوًا ، لقد حدث خطأ'},
     parseError : {he: 'שגיאה בעיבוד הקוד', ar: 'خطأ في معالجة الكود'},

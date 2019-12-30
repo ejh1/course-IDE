@@ -10,9 +10,7 @@ import { translate } from '@components/Trans';
 import { SandboxComm, SandboxMsgType, IDebugNextData, IDebugMsgData } from '@services/SandboxComm';
 
 interface IProps {
-    value?: string;
-    options?: monaco.editor.IEditorOptions;
-    loadedData?: {[key: string]: string}
+    loadedData : {[key: string]: string};
 }
 interface IState {
     chosenTabIndex: number;
@@ -34,7 +32,6 @@ export default class CodeEditor extends React.Component<IProps, IState> {
     sandboxComm: SandboxComm;
     setRef = (element: HTMLDivElement) => {
         this.editorContainer = element;
-        const { value, options} = this.props;
         this.componentWillUnmount();
         if (!element) {
             return;
@@ -50,7 +47,6 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             automaticLayout: true,
             lineNumbersMinChars: 3,
             lineDecorationsWidth: 5,
-            ...options
         });
         this._editor.onMouseDown(this.onEditorMouseDown);
         this._editor.setModel(this.tabs[this.state.chosenTabIndex].model);

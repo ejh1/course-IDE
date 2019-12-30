@@ -5,6 +5,8 @@ import { translate, TextCodes } from '@components/Trans';
 const { Title } = Typography;
 const frameStyleUrl = require('@assets/content.css');
 
+import './styles.scss';
+
 export const FileView = () => {
     const [selectedFile] = useGlobal('selectedFile');
     const [files] = useGlobal('files');

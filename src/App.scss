@@ -26,5 +26,16 @@ $headerHeight: 55px;
         width: 100%;
         top: $headerHeight;
         bottom: 0px;
+        display: flex;
+        .side-bar {
+            width: 37px;
+            display: flex;
+            flex-direction: column;
+            padding: 20px 2px;
+            background-color: #e8e8e8;
+            button {
+                margin-bottom: 10px;
+            }
+        }
     }
 }
