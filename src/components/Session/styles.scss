@@ -1,0 +1,14 @@
+.session-title-bar {
+    padding: 10px;
+    display: flex; // Hack for making only code slected on dblclick
+    .session-title-code {
+        unicode-bidi: bidi-override;
+        margin: 0 5px;
+    }
+}
+.session-students {
+    padding: 0 5px;
+    .student {
+        cursor: pointer;
+    }
+}

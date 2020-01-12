@@ -1,16 +1,20 @@
 import React from 'reactn';
-import { Tabs, Button } from 'antd';
+import debounce from 'lodash/debounce';
+import { Tabs, Button, Switch, Icon, Typography } from 'antd';
+const { Title } = Typography;
 const { TabPane } = Tabs;
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
-import { DebugExecution, ITextData, JSInterpreter } from '@services/debugger';
+import { ITextData, JSInterpreter } from '@services/debugger';
 
 import './styles.scss';
-import { IConsoleItem } from '@services/class-data';
-import { translate } from '@components/Trans';
+import { IConsoleItem, ISnippet, IDisplaySnippet, SnippetType } from '@services/class-data';
+import { translate, TextCodes } from '@components/Trans';
 import { SandboxComm, SandboxMsgType, IDebugNextData, IDebugMsgData } from '@services/SandboxComm';
 
 interface IProps {
     loadedData : {[key: string]: string};
+    snippetToDisplay: IDisplaySnippet;
+    shareCode: boolean;
 }
 interface IState {
     chosenTabIndex: number;
@@ -48,19 +52,29 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             lineNumbersMinChars: 3,
             lineDecorationsWidth: 5,
         });
+        this._editor.onDidChangeModelContent(debounce(this.onCodeChange));
         this._editor.onMouseDown(this.onEditorMouseDown);
         this._editor.setModel(this.tabs[this.state.chosenTabIndex].model);
     }
     componentWillUnmount = () => this._editor && this._editor.dispose();
 
-    componentDidUpdate = ({loadedData: oldData}: IProps) => {
-        const {loadedData: newData} = this.props;
+    componentDidUpdate = ({loadedData: oldData, snippetToDisplay: oldSnippet, shareCode: oldShareCode}: IProps) => {
+        const {loadedData: newData, snippetToDisplay: newSnippet, shareCode} = this.props;
+        let dataToUse: Record<string, string>;
         if (newData && newData !== oldData) {
+            dataToUse = newData;
+        } else if (newSnippet && (!oldSnippet || newSnippet.id !== oldSnippet.id || newSnippet.timestamp !== oldSnippet.timestamp)) {
+            dataToUse = newSnippet.code || {};
+        }
+        if (oldShareCode !== shareCode && shareCode) {
+            this.dispatch.setSharedCode(this.getExecutionData());
+        }
+        if (dataToUse) {
             this.stopDebugging();
             this.tabs.forEach((tab, idx) => {
-                (tab.model as monaco.editor.ITextModel).setValue(newData[tab.lang] || '');
+                (tab.model as monaco.editor.ITextModel).setValue(dataToUse[tab.lang] || '');
             });
-            const firstTab = this.tabs.find(({lang}) => newData[lang]);
+            const firstTab = this.tabs.find(({lang}) => dataToUse[lang]);
             if (firstTab) {
                 this.tabChanged(firstTab.name);
             }
@@ -83,6 +97,11 @@ export default class CodeEditor extends React.Component<IProps, IState> {
         const tab = this.tabs[chosenTabIndex];
         this._editor.setModel(tab.model);
         tab.viewState && this._editor.restoreViewState(tab.viewState);
+    }
+    onCodeChange = () => {
+        if (this.global.shareCode) {
+            this.dispatch.setSharedCode(this.getExecutionData());
+        }
     }
     startSandbox = () => {
         this.setGlobal({sandboxCounter: Math.random()});
@@ -110,7 +129,7 @@ export default class CodeEditor extends React.Component<IProps, IState> {
         console.log(type, data);
     }
     getExecutionData = () => this.tabs.reduce((acc: {[key: string]: string}, {lang, model}) => {
-        acc[lang] = (model as monaco.editor.ITextModel).getValue();
+        acc[lang] = model ? (model as monaco.editor.ITextModel).getValue() : '';
         return acc;
     }, {});
     execute = () => {
@@ -212,8 +231,57 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             this.sandboxComm = null;
         }
     }
+    saveSnippet = () => {
+        const {snippetToDisplay} = this.props;
+        const code = this.getExecutionData();
+        if (snippetToDisplay && snippetToDisplay.type === SnippetType.USER) {
+            this.dispatch.saveSnippet({
+                ...snippetToDisplay,
+                code
+            })
+        } else {
+            const name = snippetToDisplay ? `${snippetToDisplay.name} copy` :
+                (window.prompt(translate(TextCodes.enterName, this.global.language.code), 'New Snippet') || '').trim();
+            if (name) {
+                this.dispatch.addSnippet(code, name);
+            }
+        }
+    }
+    newSnippet = () => {
+        this.dispatch.setSnippetToDisplay(SnippetType.NONE);
+    }
+    changeSnippetName = () => {
+        const {snippetToDisplay} = this.props;
+        if (snippetToDisplay.type !== SnippetType.USER) { // Cant rename a session snippet
+            return;
+        }
+        const newName = (window.prompt(translate(TextCodes.enterName, this.global.language.code), snippetToDisplay.name) || '').trim();
+        if (newName && newName !== snippetToDisplay.name) {
+            this.dispatch.saveSnippet({...snippetToDisplay, name: newName});
+        }
+    }
+    renderSnippetBar() {
+        const {snippetToDisplay} = this.props;
+        return (
+            <div className="snippet-bar">
+                <span onClick={this.changeSnippetName} className="snippet-title">
+                    <Title level={4} >{snippetToDisplay && snippetToDisplay.name}</Title>
+                </span>
+                {this.global.session &&
+                    <Switch
+                        onChange={() => this.dispatch.toggleCodeSharing()}
+                        checkedChildren={<Icon type="eye" />}
+                        unCheckedChildren={<Icon type="eye-invisible" />}
+                        checked={this.props.shareCode}
+                    />}
+                <Button icon="save" shape="circle" onClick={this.saveSnippet} />
+                {snippetToDisplay && <Button icon="file-add" shape="circle" onClick={this.newSnippet} />}
+            </div>
+        );
+    }
     render() {
         return (<div className="code-editor">
+            { this.global.user && this.renderSnippetBar() }
             <Tabs
                 activeKey={this.tabs[this.state.chosenTabIndex].name}
                 className="ce-tabs"

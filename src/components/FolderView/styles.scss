@@ -1,0 +1,10 @@
+.with-snippets {
+    height: 100%;
+    .folder-tree {
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+    & > * {
+        height: 50%;
+    }
+}
