@@ -2,6 +2,9 @@
     width: 100%;
     height: 100%;
     .splitter-item {
+        &.hidden {
+            display: none;
+        }
         display: inline-block;
         height: 100%;
         position: relative;
@@ -11,7 +14,7 @@
             right: 3px;
             height: 100%;
         }
-        &:first-child .splitter-item-inner {
+        &.first .splitter-item-inner {
             left: 0px;
         }
         &:last-child .splitter-item-inner {
@@ -28,7 +31,7 @@
             border-width: 0 1px 0 1px;
             cursor: ew-resize;
         }
-        &:first-child > .splitter-divider {
+        &.first > .splitter-divider {
             display: none;
         }
     }

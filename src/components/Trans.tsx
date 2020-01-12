@@ -3,7 +3,14 @@ import { ReactElement } from 'react';
 
 export enum TextCodes {
     appTitle,
+    login,
+    logout,
+    code,
+    startSession,
+    join,
     load,
+    enterName,
+    snippets,
     oops,
     parseError,
     expectingParam,
@@ -27,7 +34,14 @@ export enum TextCodes {
 // code_key -> 'blah bla {key}'
 const translations: {[key in keyof typeof TextCodes]: {[code: string]: string}} = {
     appTitle : {he: 'קורס פיתוח אפליקציות ב- Javascript', ar: 'دورة تطوير تطبيق Javascript'},
+    login: {he: 'התחברות', ar: 'دخول'},
+    logout: {he: 'התנתקות', ar: 'خروج'},
+    code: {he: 'קוד שיעור', ar: 'كود الدرس'},
+    startSession: {he: 'התחל שיעור', ar: 'أبدا الدرس'},
+    join: {he: 'הצטרפות', ar: 'انضمام'},
     load : {he: 'טען', ar: 'حمل'},
+    enterName : {he: 'הכנסת שם', ar: 'أدخل الاسم'},
+    snippets : {he: 'קטעי קוד', ar: 'مقتطفات الشفرة'},
     oops : {he: 'אופס, קרתה שגיאה', ar: 'عفوًا ، لقد حدث خطأ'},
     parseError : {he: 'שגיאה בעיבוד הקוד', ar: 'خطأ في معالجة الكود'},
     expectingParam : {he: 'אמור לבוא פרמטר אחרי האופרטור', ar: 'يجب أن تأتي المعلمة بعد المشغل'},

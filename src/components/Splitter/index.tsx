@@ -1,13 +1,25 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, FC, Component } from 'react';
 
 import './styles.scss';
 
-export const Splitter = ({initialWidths, children}: any) => {
-    initialWidths = initialWidths || {};
+interface IProps {
+    initialWidths?: number[];
+    childrenFilter?: boolean[];
+}
+export const Splitter: FC<IProps> = ({initialWidths = [], children = [], childrenFilter}) => {
     const childrenRefs = useRef([]);
     const setRef = (idx: number, elem: HTMLDivElement) => childrenRefs.current[idx] = elem;
     const [widths, setWidths] = useState<number[]>([]);
-    const defaultWidth = 100/children.length;
+    const defaultWidth = 100/(children as Component[]).length;
+    const computedWidths = (children as Component[]).map((child, idx) => widths[idx] || initialWidths[idx] || defaultWidth);
+    let firstIdx = 0;
+    if (childrenFilter) {
+        const widthSum = computedWidths.reduce((acc, width, idx) => acc + (childrenFilter[idx] ? width : 0), 0);
+        if (widthSum < 100) {
+            computedWidths.forEach((width, idx) => computedWidths[idx] *= 100 / widthSum);
+        }
+        firstIdx = childrenFilter.indexOf(true);
+    }
 
     const dragContextRef = useRef({});
     const onDragStart = (idx: number, {pageX}: React.MouseEvent<HTMLDivElement>) => {
@@ -52,9 +64,12 @@ export const Splitter = ({initialWidths, children}: any) => {
         newWidths[idx] = rightWidth / fullWidth * 100;
         setWidths(newWidths);
     }
+    const getClassName = (idx: number) => 'splitter-item' +
+        (childrenFilter && !childrenFilter[idx] ? ' hidden' : '') +
+        (idx === firstIdx ? ' first' : '');
     return <div className="splitter">
-        {children.map((child: any, idx: number) => (
-            <div className="splitter-item" key={idx} ref={setRef.bind(null, idx)} style={{width:(widths[idx] || initialWidths[idx] || defaultWidth) + '%'}}>
+        {(children as Component[]).map((child: any, idx: number) => (
+            <div className={getClassName(idx)} key={idx} ref={setRef.bind(null, idx)} style={{width:computedWidths[idx] + '%'}}>
                 <div className="splitter-item-inner">{child}</div>
                 <div className="splitter-divider" onMouseDown={onDragStart.bind(null, idx)} />
             </div>

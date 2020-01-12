@@ -1,14 +1,22 @@
-import React, {useGlobal} from 'reactn';
+import React, {useGlobal, useDispatch} from 'reactn';
 import { useRef, useEffect, useCallback } from 'react';
 import { Typography } from 'antd';
 import { translate, TextCodes } from '@components/Trans';
 const { Title } = Typography;
 const frameStyleUrl = require('@assets/content.css');
 
+import './styles.scss';
+import { SnippetType, ISnippet } from '@services/class-data';
+
 export const FileView = () => {
     const [selectedFile] = useGlobal('selectedFile');
     const [files] = useGlobal('files');
-    const [_loadedData, setLoadedData] = useGlobal('loadedData');
+    const setLoadedData = useGlobal('loadedData')[1];
+    const setSnippetToDisplay = useDispatch('setSnippetToDisplay');
+    const loadData = (data: ISnippet['code']) => {
+        setSnippetToDisplay(SnippetType.NONE);
+        setLoadedData(data);
+    }
     const frameRef = useRef<HTMLIFrameElement>();
     const [language] = useGlobal('language');
     const loadText = translate(TextCodes.load, language.code);
@@ -44,7 +52,7 @@ export const FileView = () => {
                 tabs.forEach((tab: HTMLDivElement) => tab.onclick = selectTab);
                 (tabs[0] as any).click();
             }
-            (div.querySelector('button') as HTMLButtonElement).onclick = () => setLoadedData(data);
+            (div.querySelector('button') as HTMLButtonElement).onclick = () => loadData(data);
         })
     }, [selectedFile, files])
     const prepIframe = useCallback((node: HTMLIFrameElement) => {

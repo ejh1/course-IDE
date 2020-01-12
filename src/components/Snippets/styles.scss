@@ -1,0 +1,17 @@
+.snippets {
+    overflow-y: auto;
+    .ant-list {
+        border-bottom: none;
+        border-radius: 0;
+        .ant-list-item.selected {
+            background-color: #1890ff;
+            color: white;
+        }
+        .ant-list-item {
+            padding-right: 10px;
+            .ant-list-item-action {
+                margin-left: 20px;
+            }
+        }
+    }
+}

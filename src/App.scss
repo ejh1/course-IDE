@@ -1,5 +1,14 @@
 $headerHeight: 55px;
 .app {
+    .join-session-btn {
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+    }
+    .join-session-input {
+        border-right-width: 0;
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+    }
     header {
         direction: rtl;
         height: $headerHeight;
@@ -26,5 +35,28 @@ $headerHeight: 55px;
         width: 100%;
         top: $headerHeight;
         bottom: 0px;
+        display: flex;
+        .side-bar {
+            width: 37px;
+            display: flex;
+            flex-direction: column;
+            padding: 20px 2px;
+            background-color: #e8e8e8;
+            button {
+                margin-bottom: 10px;
+            }
+        }
+        .side-panel {
+            height: 100%;
+            & > * {
+                height: 100%;
+            }
+        }
+    }
+    .student-count sup {
+        background-color: #fff;
+        color: #999;
+        box-shadow: 0 0 0 1px #d9d9d9 inset;
+        top: 31px;
     }
 }
