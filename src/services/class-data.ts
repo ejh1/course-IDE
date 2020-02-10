@@ -93,7 +93,13 @@ const fetchFile = async (file: string) => {
     const response = await fetch(`${CLASSES_BASE_PATH}${encodeURIComponent(file)}?alt=media`);
     return response.ok ? response.text() : '';
 }
-export const login = () => app.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());
+export const login = () => {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({
+        prompt: 'select_account'
+    });
+    app.auth().signInWithPopup(provider);
+};
 export const logout = () => firebase.auth().signOut();
 export const initializeGlobalState = () => {
     const unsubscriptions: Record<string, Array<() => void>> = {};
@@ -133,7 +139,7 @@ export const initializeGlobalState = () => {
             if (user) {
                 if (!user.isAnonymous) {
                     dispatch.listenToSessions(user.uid);
-                    const instructor = await firebase.firestore().collection('instructors').doc(user.uid).get();
+                    const instructor = await firebase.firestore().collection('instructor-emails').doc(user.email).get();
                     dispatch.setUserData({isInstructor: !!instructor.data()});
                 }
                 const {pendingStudentSession} = global;
@@ -335,7 +341,16 @@ export const initializeGlobalState = () => {
             return {session};
         },
         setSessions: (global, dispatch, sessions: Record<string, number>) => ({sessions}),
-        setSnippets: (global, dispatch, snippets: ISnippet[]) => ({snippets}),
+        setSnippets: (global, dispatch, snippets: ISnippet[]) => {
+            const {snippetToDisplay} = global;
+            if (snippetToDisplay) {
+                const snippet = snippets.find(({id}) => id === snippetToDisplay.id);
+                if (snippet && snippet.timestamp !== snippetToDisplay.timestamp) {
+                    setTimeout(() => dispatch.setSnippetToDisplay(snippetToDisplay.type, snippet.id), 1);
+                }
+            }
+            return {snippets};
+        },
         setSnippetToDisplay: (global, _dispatch, type: SnippetType, id: string = '') => {
             let snippet: ISnippet, snippetToDisplay: IDisplaySnippet;
             let sharingStudent;
@@ -398,7 +413,7 @@ export const initializeGlobalState = () => {
                 name
             };
             updateSnippets(uid, (snippets || []).concat(snippet));
-            setTimeout(() => dispatch.setSnippetToDisplay(SnippetType.USER, snippet.id), 1);
+            setTimeout(() => dispatch.setSnippetToDisplay(SnippetType.USER, snippet.id), 100);
         },
         setSessionStudents: (global, dispatch, sessionStudents: Record<string, ISessionStudentData>) =>
             ({sessionStudents, sessionStudentsCount: Object.keys(sessionStudents || {}).length}),

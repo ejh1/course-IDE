@@ -77,6 +77,14 @@ export class SandboxFrame implements IDebugCallbacks {
                     this.debugExecution.setBreakpoinLines(data as DebugExecution['breakpointLines']);
                 }
                 break;
+            case SandboxMsgType.GET_VAR_VALUE:
+                if (this.debugExecution) {
+                    const value = this.debugExecution.getVariableValue(data as IToken);
+                    if (value) {
+                        this.comm.send(SandboxMsgType.RETURN_VAR_VALUE, {token: data, value});
+                    }
+                }
+                break;
         }
     }
     debugStepCallback = (line: number, offset: number) => this.comm.send(SandboxMsgType.DEBUG_STEP, {line, offset})

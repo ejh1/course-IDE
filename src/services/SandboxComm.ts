@@ -7,12 +7,14 @@ export enum SandboxMsgType {
     DEBUG_NEXT = 'DEBUG_NEXT',
     DEBUG_STOP = 'DEBUG_STOP',
     SET_BREAKPOINTS = 'SET_BREAKPOINTS',
+    GET_VAR_VALUE = 'GET_VAR_VALUE',
 
     // frame => top
     READY = 'SANDBOX_READY',
     CONSOLE = 'CONSOLE',
     DEBUG_STEP = 'DEBUG_STEP',
-    DEBUG_ANNOTATION = 'DEBUG_ANNOTATION'
+    DEBUG_ANNOTATION = 'DEBUG_ANNOTATION',
+    RETURN_VAR_VALUE = 'RETURN_VAR_VALUE'
 };
 interface ISandboxMsg {
     isSandboxMsg: boolean;

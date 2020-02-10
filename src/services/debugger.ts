@@ -1,7 +1,8 @@
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 import { TextCodes } from "@components/Trans";
+import last from 'lodash/last';
 
-enum TokenType {
+export enum TokenType {
     Nothing, // Occupy the zero val
     // Keywords
     Let,
@@ -36,6 +37,8 @@ enum TokenType {
     Lt,
     Gte,
     Lte,
+    And,
+    Or,
 
     // Delimiters
     Comma,
@@ -87,6 +90,8 @@ const valueToType: {[key: string]: TokenType} = {
     '<': TokenType.Lt,
     '>=': TokenType.Gte,
     '<=': TokenType.Lte,
+    '&&': TokenType.And,
+    '||': TokenType.Or,
     ';': TokenType.Semicolon,
     ',': TokenType.Comma,
     '.': TokenType.Dot,
@@ -107,19 +112,27 @@ const isAssignment = (type: TokenType): boolean => [
     ].includes(type)
 const getPriority = (type: TokenType): number => {
     switch(type) {
+        case TokenType.Or:
+            return 0;
+        case TokenType.And:
+            return 1;
         case TokenType.Assign:
         case TokenType.AddAssign:
         case TokenType.SubtAssign:
         case TokenType.MultAssign:
         case TokenType.DivAssign:
         case TokenType.Return:
-            return 0;        
+        case TokenType.Gte:
+        case TokenType.Gt:
+        case TokenType.Lte:
+        case TokenType.Lt:
+            return 2;        
         case TokenType.Add:
         case TokenType.Subtract:
-            return 1;
+            return 3;
         case TokenType.Mult:
         case TokenType.Divide:
-            return 2;
+            return 4;
         default:
             throw new Error('unknownType '+type);
     }
@@ -131,10 +144,12 @@ export interface IToken {
     offset: number;
     value?: string | number;
     isUnary?: boolean;
+    closingIndex?: number;
 }
+const isTokenAfter = (a: IToken, b: IToken) => b.line > a.line || b.line === a.line && b.offset > a.offset;
 interface IStatement {
     token: IToken;
-    execute: (scope: IScope, context?: any) => any;
+    execute: (scope: Scope, context?: any) => any;
     toString: () => string;
     isBlockStatement?: () => boolean;
 }
@@ -164,6 +179,7 @@ export class DebugExecution implements IDebugCallbacks {
     stepByStep: boolean;
     lastNotificationToken: IToken;
     globalScope: GlobalScope;
+    currentScope: Scope;
     constructor(tokens: IToken[], callback: IDebugCallbacks['debugStepCallback'],
         anotCB: IDebugCallbacks['debugAnnotationCallback'],
         breakpointLines: DebugExecution['breakpointLines'])
@@ -176,7 +192,7 @@ export class DebugExecution implements IDebugCallbacks {
             const interpreter = new JSInterpreter(tokens);
             const topBlock = interpreter.top;
             this.globalScope = new GlobalScope(this);
-            topBlock.execute(new Scope(this.globalScope), () => this.stepByStep = false).catch(this.handleError);
+            topBlock.execute(new Scope(this.globalScope, new ClosureVariables()), () => this.stepByStep = false).catch(this.handleError);
         } catch (err) {
             this.handleError(err);
         }
@@ -184,7 +200,8 @@ export class DebugExecution implements IDebugCallbacks {
     setBreakpoinLines = (breakpointLines: DebugExecution['breakpointLines']) => this.breakpointLines = breakpointLines
     handleError = (err: Error) => {
         if (err instanceof DebugError) {
-            const {msg, token: {line, offset, value = ' '}} = err as DebugError;
+            const {msg, token = {line:0,offset:0}} = err as DebugError;
+            const {line, offset, value = ' '} = token as IToken;
             this.debugAnnotationCallback(line, offset, offset + (value as string).length, msg, true);
         } else {
             this.debugAnnotationCallback(0, 0, 0, {text: TextCodes.oops}, true);
@@ -198,8 +215,15 @@ export class DebugExecution implements IDebugCallbacks {
         this.clearNext = null;
         clearNext && clearNext();
     }
+    getVariableValue = (token: IToken): any => {
+        // Translate position to token
+        if (!this.currentScope) {
+            return;
+        }
+        return this.currentScope.getValueForToken(token);
+    }
     // If token wasn't supplied - stop on last notification - used for between jumps
-    mayIExecute = async (token?: IToken) => {
+    mayIExecute = async (scope: Scope, token?: IToken) => {
         if (!token) {
             token = this.lastNotificationToken;
             this.lastNotificationToken = null;
@@ -211,7 +235,11 @@ export class DebugExecution implements IDebugCallbacks {
         if (this.executionAborted || this.stepByStep || this.breakpointLines[line]) {
             this.debugStepCallback(line, offset);
             return new Promise((res) => {
-                this.clearNext = res;
+                this.currentScope = scope;
+                this.clearNext = () => {
+                    this.currentScope = null;
+                    res();
+                };
             })
         }
         return true;
@@ -224,12 +252,11 @@ export class DebugExecution implements IDebugCallbacks {
             this.debugAnnotationCallback(line, offset, offset + (tValue as string).length, msg, false);
         }
     }
-    setValue = (token: IToken, oldValue: any, value: any): void => {
-        // console.log(`${token.value}: ${oldValue} => ${value}`);
-    }
     dispose = (): void => {
         const {globalScope} = this;
-        globalScope.dispose();
+        if (globalScope) {
+            globalScope.dispose();
+        }
         this.globalScope = null;
         this.clearNext = null;
     }
@@ -259,7 +286,6 @@ class GlobalScope implements IScope {
     set = (key: string, value: any, identifier: IToken, declaredType?: TokenType): void => {
         const oldValue = (window as any)[key];
         (window as any)[key] = value;
-        this.execution.setValue(identifier, oldValue, value);
     }
     notify = (...args: Parameters<IScope['notify']>) => this.execution.notify(...args);
     getException = (...args: Parameters<IScope['getException']>) => this.execution.getException(...args);
@@ -273,12 +299,14 @@ class Scope implements IScope {
     isFunctionScope: boolean;
     variables: Record<string, VariableState> = {};
     global: IScope;
+    closureVariables: ClosureVariables;
 
-    constructor(parent: IScope, isFunctionScope = false) {
+    constructor(parent: IScope, closureVariables: ClosureVariables, isFunctionScope = false) {
         this.parent = parent;
         this.execution = parent.execution;
         this.global = parent.global;
         this.isFunctionScope = isFunctionScope;
+        this.closureVariables = closureVariables;
     }
     _get = (key: string): any => this.variables[key] || this.parent._get(key);
     get = (identifier: IToken) => {
@@ -295,25 +323,37 @@ class Scope implements IScope {
     set = (key: string, value: any, identifier: IToken, declaredType?: TokenType): void => {
         const myVariable = this.variables[key];
         const variable = myVariable || this._get(key);
-        if (variable instanceof VariableState) { // Already defined
-            if (declaredType && myVariable) { // TODO - differentiate between var and let/const
+        if (declaredType) {
+            if (myVariable) { // TODO - differentiate between var and let/const
                 throw this.getException(identifier, {text: TextCodes.alreadyDefined_var, params: {var: identifier.value.toString()}});
             }
+            // TODO - if var/function => set in closest function/global scope
+            if (variable) {
+                // TODO - notify that we are shadowing an outer scope variable
+            }
+            this.variables[key] = new VariableState(declaredType, identifier, value);
+        } else if (variable instanceof VariableState) { // Already defined
             if (variable.declaredType === TokenType.Const) {
                 throw this.getException(identifier, {text: TextCodes.constChange});
             }
-            this.execution.setValue(variable.identifier, variable.value, value);
             variable.value = value;
-        } else if (declaredType) {
-            this.execution.setValue(identifier, undefined, value);
-            // TODO - if var/function => set in closest function/global scope
-            this.variables[key] = new VariableState(declaredType, identifier, value);
         } else { // Global variable
             this.global.set(key, value, identifier);
         }
     }
     notify = (...args: Parameters<IScope['notify']>) => this.execution.notify(...args);
     getException = (...args: Parameters<IScope['getException']>) => this.execution.getException(...args);
+    getValueForToken = (token: IToken): any => {
+        if (this.closureVariables.isValueKnownByThisScope(token)) {
+            const result = this._get(token.value as string);
+            if (result instanceof VariableState) {
+                return {value: result.value}
+            }
+            return result === undefined ? result : {value: result};
+        } else if (this.parent && this.parent instanceof Scope) {
+            return (this.parent as Scope).getValueForToken(token);
+        }
+    }
 }
 class Variable implements IStatement {
     token: IToken;
@@ -351,7 +391,7 @@ class Assignment implements IStatement {
         Object.assign(this, {token, left});
         right && (this.right = right);
     }
-    execute = async (scope: IScope) => {
+    execute = async (scope: Scope) => {
         const {token, left, right} = this;
         const {type} = token;
         let val = right && await right.execute(scope);
@@ -420,7 +460,7 @@ class FunctionCall implements IStatement {
     constructor(token: IToken, func: IStatement, args: IStatement[]) {
         Object.assign(this, {token, func, args});
     }
-    execute = async (scope: IScope) => {
+    execute = async (scope: Scope) => {
         const {func} = this;
         const thisRef: any[] = [];
         const funcS: FunctionDef = await func.execute(scope, thisRef);
@@ -440,11 +480,11 @@ class FunctionDef implements IStatement {
     identifier: IToken;
     args: IStatement[];
     body: Block;
-    closure: IScope;
+    closure: Scope;
     constructor(token: IToken, args: IStatement[], body: Block, identifier?: IToken) {
         Object.assign(this, {token, args, body, identifier});
     }
-    execute = async (scope: IScope): Promise<IStatement> => {
+    execute = async (scope: Scope): Promise<IStatement> => {
         const {identifier} = this;
         this.closure = scope;
         // Return a function that can be called independently (when attached as an event handler)
@@ -459,7 +499,7 @@ class FunctionDef implements IStatement {
         return thisAsFunc as unknown as IStatement;
     }
     executeFunction = async (scope: IScope, args: any[]) => {
-        let funcScope = new Scope(this.closure, true);
+        let funcScope = new Scope(this.closure, this.closure.closureVariables, true);
         this.args.forEach(({token}, idx) => {
             funcScope.set(token.value as string, args[idx], token, TokenType.Let);
         });
@@ -481,7 +521,7 @@ class Return implements IStatement {
     constructor(token: IToken, arg: IStatement) {
         Object.assign(this, {token, arg});
     }
-    execute = async (scope: IScope) => {
+    execute = async (scope: Scope) => {
         const result = await this.arg.execute(scope);
         scope.notify(this.arg.token, {text: TextCodes.functionReturn_val, params: {val: result}});
         return new ReturnValue(result);
@@ -501,31 +541,32 @@ class If implements IStatement {
     constructor(token: IToken, condition: IStatement, body: Block, elseStatement?: IStatement) {
         Object.assign(this, {token, condition, body, elseStatement});
     }
-    execute = async (scope: IScope) => {
+    execute = async (scope: Scope) => {
         const {condition, body, elseStatement} = this;
         let condValue = await condition.execute(scope);
         if (condValue) {
             scope.notify(condition.token, {text: TextCodes.condPass_val, params:{val: condValue}});
             return await body.execute(scope);
         } else {
-            scope.notify((elseStatement || condition).token, {text: TextCodes.condFail_val, params:{val: condValue}});
-            scope.execution.mayIExecute(condition.token);
+            const code = elseStatement && !(elseStatement instanceof If) ? TextCodes.condFailElse_val : TextCodes.condFail_val;
+            scope.notify((elseStatement || condition).token, {text: code, params:{val: condValue}});
+            scope.execution.mayIExecute(scope, condition.token);
             return elseStatement && await elseStatement.execute(scope);
         }
     }
-    isBlockStatement = () => true;
 }
 class Loop implements IStatement {
     token: IToken;
     initialization?: IStatement;
     condition: IStatement;
     postBlock?: IStatement;
+    outerClosure: ClosureVariables;
     body: Block;
-    constructor(token: IToken, condition: IStatement, body: Block, initialization?: IStatement, postBlock?: IStatement) {
-        Object.assign(this, {token, initialization, condition, postBlock, body});
+    constructor(token: IToken, condition: IStatement, body: Block, initialization?: IStatement, postBlock?: IStatement, outerClosure: ClosureVariables = new ClosureVariables()) {
+        Object.assign(this, {token, initialization, condition, postBlock, body, outerClosure});
     }
-    execute = async (scope: IScope) => {
-        let myScope = new Scope(scope);
+    execute = async (scope: Scope) => {
+        let myScope = new Scope(scope, this.outerClosure);
         const {initialization, condition, postBlock, body} = this;
         initialization && await initialization.execute(myScope);
         while (true) {
@@ -538,7 +579,7 @@ class Loop implements IStatement {
                 }
                 if (postBlock) {
                     await postBlock.execute(myScope);
-                    await scope.execution.mayIExecute();// Pause on post block notification
+                    await scope.execution.mayIExecute(myScope);// Pause on post block notification
                 }
             } else {
                 myScope.notify(condition.token, {text: TextCodes.condFail_val, params:{val: condValue}});
@@ -546,7 +587,6 @@ class Loop implements IStatement {
             }
         }
     }
-    isBlockStatement = () => true;
 }
 class EndLoopRun implements IStatement {
     token: IToken;
@@ -560,30 +600,47 @@ class EndLoopRun implements IStatement {
         return this;
     }
 }
+class ClosureVariables {
+    declaredVariables: Record<string, boolean> = {};
+    appearances: Record<string, IToken[]> = {};
+    addAppearance = (token: IToken, isDeclaration: boolean = false) => {
+        const key = token.value as string;
+        if (isDeclaration) {
+            this.declaredVariables[key] = true;
+        }
+        (this.appearances[key] || (this.appearances[key] = [])).push(token);
+    }
+    isValueKnownByThisScope = (token: IToken): boolean => {
+        const key = token.value as string;
+        // if appearance is here or if not declared by me
+        const varApperances = this.appearances[key];
+        return (varApperances && varApperances.some(({line, offset}) => line === token.line && offset === token.offset))
+            || !this.declaredVariables[key];
+    }
+}
 class Block implements IStatement {
     token: IToken;
     statements: IStatement[];
-    constructor(token: IToken, statements: IStatement[]) {
-        this.token = token;
-        this.statements = statements;
+    variables: ClosureVariables;
+    constructor(token: IToken, statements: IStatement[], variables: ClosureVariables) {
+        Object.assign(this, {token, statements, variables});
     }
-    execute = async (scope: IScope, endCallback?: () => void): Promise<ReturnValue | EndLoopRun | void> => {
-        const blockScope = new Scope(scope);
+    execute = async (scope: Scope, endCallback?: () => void): Promise<ReturnValue | EndLoopRun | void> => {
+        const blockScope = new Scope(scope, this.variables);
         let result, statement;
         for (let i = 0; i < this.statements.length; i++) {
             statement = this.statements[i];
-            await scope.execution.mayIExecute(statement.token);
+            await scope.execution.mayIExecute(blockScope, statement.token);
             result = await statement.execute(blockScope);
             if (result instanceof ReturnValue || result instanceof EndLoopRun) {
                 break;
             }
         }
         // If last statement issued a notification, hang on there
-        await scope.execution.mayIExecute();
+        await scope.execution.mayIExecute(scope);
         endCallback && endCallback();
         return result;
     }
-    isBlockStatement = () => true
 }
 class DotStatement implements IStatement {
     token: IToken;
@@ -594,7 +651,7 @@ class DotStatement implements IStatement {
         this.left = left;
         this.right = right;
     }
-    execute = async (scope: IScope, leftValRef?: any[]) => {
+    execute = async (scope: Scope, leftValRef?: any[]) => {
         const {left, right} = this;
         const leftVal = left.execute ? await left.execute(scope) : left;
         if (leftVal === undefined || leftVal === null) { // TODO - any other cases?
@@ -606,7 +663,7 @@ class DotStatement implements IStatement {
         }
         return leftVal[right.value as string];
     }
-    assign = async (scope: IScope, value: any) => {
+    assign = async (scope: Scope, value: any) => {
         const {left, right} = this;
         const leftVal = left.execute ? await left.execute(scope) : left;
         // TODO - handle errors
@@ -623,7 +680,7 @@ class OperationStatement implements IStatement {
         this.left = left;
         right && (this.right = right);
     }
-    execute = async (scope: IScope) => {
+    execute = async (scope: Scope) => {
         const {token, left, right} = this;
         const lVal = left && await left.execute(scope);
         const rVal = await right.execute(scope);
@@ -652,8 +709,10 @@ class OperationStatement implements IStatement {
                 return lVal >= rVal;
             case TokenType.Lte:
                 return lVal <= rVal;
-            defult:
-                throw new Error(`operation ${token.value} isnt implemented yet`);
+            case TokenType.And:
+                return lVal && rVal;
+            case TokenType.Or:
+                return lVal || rVal;
         }
     }
 }
@@ -669,6 +728,7 @@ type ICompResult<T = IStatement> = [T, number];
 export class JSInterpreter {
     tokens: IToken[];
     top: Block;
+    closureStack: ClosureVariables[] = [];
     error: {msg: string, token:IToken};
 
     static tokenize = (lines: string[]) => {
@@ -738,20 +798,57 @@ export class JSInterpreter {
     }
 
     constructor(tokens: JSInterpreter['tokens']) {
-        this.tokens = tokens;
+        this.tokens = [
+            {line: 0, offset: 0, type: TokenType.CurlyOpen},
+            ...tokens,
+            {line: -1, offset: -1, type: TokenType.CurlyClose}
+        ];
+        this.processBraceClosing();
         const [top, nextIdx] = this.compileBlock(0);
         this.top = top;
         if (this.tokens[nextIdx]) {
-            throw this.getCompilationError({text:TextCodes.parseError}, this.tokens[this.tokens.length - 2]);
+            throw this.getCompilationError({text:TextCodes.parseError}, last(this.tokens));
         }
     }
+    processBraceClosing = () => {
+        const bracesStack: IToken[] = [];
+        this.tokens.forEach((token, idx) => {
+            let isCurly = false;
+            switch (token.type) {
+                case TokenType.CurlyOpen:
+                case TokenType.ParenOpen:
+                    bracesStack.push(token);
+                    break;
+                case TokenType.CurlyClose:
+                    isCurly = true;
+                case TokenType.ParenClose:
+                    const opening = bracesStack.pop();
+                    if (opening.type === (isCurly ? TokenType.CurlyOpen : TokenType.ParenOpen)) {
+                        opening.closingIndex = idx;
+                    } else {
+                        throw this.getCompilationError({text: TextCodes.unclosedBraces}, opening);
+                    }
+                    break;
+            }
+        });
+        if (bracesStack.length) {
+            throw this.getCompilationError({text: TextCodes.unclosedBraces}, bracesStack.pop());
+        }
+    }
+    getCurrentClosureVariables = () => last(this.closureStack)
     getCompilationError = (msg: ITextData, token: IToken) => {
         return new DebugError(msg || {text: TextCodes.parseError}, token);
     }
-    compileStatement = (idx: number, endDelimiters: TokenType[] = [TokenType.Semicolon]): ICompResult => {
+    compileStatement = (idx: number, endDelimiters: TokenType[] = [TokenType.Semicolon], maxIndex: number): ICompResult => {
         const statementStack: IStatement[] = [];
         const operationStack: IToken[] = [];
-        const isExpectingArgument = () => statementStack.length === operationStack.length;
+        const isExpectingArgument = () => !statementStack.length || operationStack.length && isTokenAfter(last(statementStack).token, last(operationStack));
+        const pushStatement = (statement: IStatement) => {
+            if (statementStack.length && !operationStack.length) {
+                throw this.getCompilationError({text: TextCodes.expectingOperator}, statementStack[0].token);
+            }
+            statementStack.push(statement);
+        }
         const getStatement = (errToken: IToken) => {
             const result = statementStack.pop();
             if (!result) {
@@ -780,7 +877,7 @@ export class JSInterpreter {
             } else {
                 result = new OperationStatement(op, left, right);
             }
-            statementStack.push(result);
+            pushStatement(result);
             return result;
         }
         const wrapUp = (errToken: IToken) => {
@@ -810,7 +907,7 @@ export class JSInterpreter {
             return this.compileBlock(idx);
         }
         let token: IToken;
-        for (let i = idx; i < tokens.length; i++) {
+        for (let i = idx; i <= maxIndex; i++) {
             token = tokens[i];
             if (endDelimiters.includes(token.type)) {
                 return [wrapUp(token), i+1];
@@ -822,18 +919,19 @@ export class JSInterpreter {
                     assertStart();
                     this.assertTokentype(++i, TokenType.Identifier);
                     const nextToken = tokens[i];
-                    statementStack.push(new VariableDeclaration(token.type, nextToken));
+                    this.getCurrentClosureVariables().addAppearance(nextToken, true);
+                    pushStatement(new VariableDeclaration(token.type, nextToken));
                     continue;
                 case TokenType.Function: {
                     const isAssignment = operationStack.length === 1 && operationStack[0].type === TokenType.Assign
                         && statementStack.length === 1;
                     isAssignment || assertStart();
                     const [funcDef, nextIdx] = this.compileFunction(i, endDelimiters);
-                    statementStack.push(funcDef);
+                    pushStatement(funcDef);
                     return [wrapUp(tokens[nextIdx] || tokens[nextIdx - 1]), nextIdx];
                 }
                 case TokenType.If:
-                    return this.compileIf(i);
+                    return this.compileIf(i, maxIndex);
                 case TokenType.While:
                     return this.compileWhile(i);
                 case TokenType.For:
@@ -844,28 +942,29 @@ export class JSInterpreter {
                     i = assertEndOfStatement(i);
                     return [new EndLoopRun(token), i];
                 case TokenType.Identifier:
-                    statementStack.push(new Variable(token));
+                    this.getCurrentClosureVariables().addAppearance(token);
+                    pushStatement(new Variable(token));
                     continue;
                 case TokenType.Dot:
                     this.assertTokentype(i+1, TokenType.Identifier);
-                    statementStack.push(new DotStatement(token, getStatement(token), tokens[++i]));
+                    pushStatement(new DotStatement(token, getStatement(token), tokens[++i]));
                     continue;
                 case TokenType.Increment:
                 case TokenType.Decrement:
-                    statementStack.push(new Assignment(token, getStatement(token)));
+                    pushStatement(new Assignment(token, getStatement(token)));
                     continue;
                 case TokenType.ParenEmpty:
                 case TokenType.ParenOpen: {
                     const isEmpty = token.type === TokenType.ParenEmpty;
                     let nextIdx, statement;
                     // Function call of last parsed statement
-                    if (statementStack.length > operationStack.length) {
-                        const func = statementStack.pop();
+                    if (statementStack.length && !isExpectingArgument()) {
+                        const func = getStatement(token);
                         let args: IStatement[];
                         [args, nextIdx] = this.compileArgsList(i);
                         statement = new FunctionCall(token, func, args);
                     } else if (!isEmpty) {
-                        [statement, nextIdx] = this.compileStatement(i + 1, [TokenType.ParenClose]);
+                        [statement, nextIdx] = this.compileStatement(i + 1, [TokenType.ParenClose], token.closingIndex);
                         // Anonymous function call
                         if (statement instanceof FunctionDef) {
                             let args: IStatement[];
@@ -875,13 +974,13 @@ export class JSInterpreter {
                     } else {
                         throw this.getCompilationError({text: TextCodes.TODO}, token);
                     }
-                    statementStack.push(statement);
+                    pushStatement(statement);
                     i = nextIdx - 1;
                     continue;
                 }
                 case TokenType.Number:
                 case TokenType.String:
-                    statementStack.push(new NativeValue(token));
+                    pushStatement(new NativeValue(token));
                     continue;
                 case TokenType.Return:
                     assertStart();
@@ -911,7 +1010,9 @@ export class JSInterpreter {
                 case TokenType.Lt:
                 case TokenType.Gte:
                 case TokenType.Lte:
-                    let lastOp = operationStack[operationStack.length - 1];
+                case TokenType.And:
+                case TokenType.Or:
+                    let lastOp = last(operationStack);
                     if (lastOp && getPriority(token.type) < getPriority(lastOp.type)) {
                         wrapOperation();
                     }
@@ -933,40 +1034,39 @@ export class JSInterpreter {
         }
     }
     compileBlock = (idx: number): ICompResult<Block> => {
+        this.closureStack.push(new ClosureVariables());
         const END: TokenType = TokenType.CurlyClose;
         this.assertTokentype(idx, TokenType.CurlyOpen);
+        const closeIndex = this.tokens[idx].closingIndex;
         let nextIdx = idx+1;
         const statements: IStatement[] = [];
         let statement: IStatement;
         while (true) {
-            [statement, nextIdx] = this.compileStatement(nextIdx, [TokenType.Semicolon, END]);
+            [statement, nextIdx] = this.compileStatement(nextIdx, [TokenType.Semicolon, END], closeIndex);
             statements.push(statement);
-            // If block compilation was ended by END
-            // TODO - find better way to know if statement ended with '}'
-            const isBlockStatement = statement.isBlockStatement && statement.isBlockStatement();
-            if (this.getType(nextIdx-1) === END && !isBlockStatement) {
-                break;
-            }
-            if (this.getType(nextIdx) === END) {
-                nextIdx++;
+            if (nextIdx >= closeIndex) {
                 break;
             }
         }
-        return [new Block(this.tokens[idx], statements), nextIdx];
+        return [new Block(this.tokens[idx], statements, this.closureStack.pop()), closeIndex + 1];
     }
     compileArgsList = (idx: number): ICompResult<IStatement[]> => {
         const {tokens} = this;
         const args: IStatement[] = [];
         let nextIdx = idx + 1;
-        if (tokens[idx].type !== TokenType.ParenEmpty) {
+        const token = tokens[idx];
+        let {closingIndex} = token;
+        if (token.type === TokenType.ParenEmpty) {
+            closingIndex = idx;
+        } else {
             this.assertTokentype(idx, TokenType.ParenOpen);
             let arg;
-            while (this.getType(nextIdx - 1) !== TokenType.ParenClose) {
-                [arg, nextIdx] = this.compileStatement(nextIdx, [TokenType.Comma, TokenType.ParenClose]);
+            while (nextIdx < closingIndex) {
+                [arg, nextIdx] = this.compileStatement(nextIdx, [TokenType.Comma, TokenType.ParenClose], closingIndex);
                 args.push(arg);
             }
         }
-        return [args, nextIdx];
+        return [args, closingIndex + 1];
     }
     compileFunction = (idx: number, endDelimiters: TokenType[]): ICompResult<FunctionDef> => {
         this.assertTokentype(idx, TokenType.Function);
@@ -987,31 +1087,34 @@ export class JSInterpreter {
         }
         return [new FunctionDef(tokens[idx], args, block, identifier), nextIdx];
     }
-    compileIf = (idx: number): ICompResult<If> => {
-        this.assertTokentype(idx + 1, TokenType.ParenOpen);// TODO - say something about us being over strict
-        let [condition, nextIdx] = this.compileStatement(idx + 2, [TokenType.ParenClose]);
+    compileIf = (ifIdx: number, maxIndex: number): ICompResult<If> => {
+        this.assertTokentype(ifIdx + 1, TokenType.ParenOpen);// TODO - say something about us being over strict
+        const {closingIndex} = this.tokens[ifIdx + 1];
+        let [condition, nextIdx] = this.compileStatement(ifIdx + 2, [TokenType.ParenClose], closingIndex);
         let [body, finalId] = this.compileBlock(nextIdx);
         const {tokens} = this;
         let elseStatement;
         if (tokens[finalId].type === TokenType.Else) {
             this.assertTokentype(finalId + 1, [TokenType.CurlyOpen, TokenType.If]);
-            [elseStatement, finalId] = this.compileStatement(finalId + 1);
+            [elseStatement, finalId] = this.compileStatement(finalId + 1, undefined, maxIndex);
         }
-        return [new If(this.tokens[idx], condition, body, elseStatement), finalId];
+        return [new If(this.tokens[ifIdx], condition, body, elseStatement), finalId];
     }
     compileWhile = (idx: number): ICompResult<Loop> => {
         this.assertTokentype(idx + 1, TokenType.ParenOpen);
-        let [condition, nextIdx] = this.compileStatement(idx + 2, [TokenType.ParenClose]);
+        let [condition, nextIdx] = this.compileStatement(idx + 2, [TokenType.ParenClose], this.tokens[idx+1].closingIndex);
         let [body, finalId] = this.compileBlock(nextIdx);
         return [new Loop(this.tokens[idx], condition, body), finalId];
     }
     compileFor = (idx: number): ICompResult<Loop> => {
         this.assertTokentype(idx + 1, TokenType.ParenOpen);
+        const {closingIndex} = this.tokens[idx + 1];
         let nextIdx, initialization, condition, postBlock, body;
-        [initialization, nextIdx] = this.compileStatement(idx + 2, [TokenType.Semicolon]);
-        [condition, nextIdx] = this.compileStatement(nextIdx, [TokenType.Semicolon]);
-        [postBlock, nextIdx] = this.compileStatement(nextIdx, [TokenType.ParenClose]);
+        this.closureStack.push(new ClosureVariables()); // Initialization can have declared variables
+        [initialization, nextIdx] = this.compileStatement(idx + 2, [TokenType.Semicolon], closingIndex);
+        [condition, nextIdx] = this.compileStatement(nextIdx, [TokenType.Semicolon], closingIndex);
+        [postBlock, nextIdx] = this.compileStatement(nextIdx, [TokenType.ParenClose], closingIndex);
         [body, nextIdx] = this.compileBlock(nextIdx);
-        return [new Loop(this.tokens[idx], condition, body, initialization, postBlock), nextIdx];
+        return [new Loop(this.tokens[idx], condition, body, initialization, postBlock, this.closureStack.pop()), nextIdx];
     }
 }

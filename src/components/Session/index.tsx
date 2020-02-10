@@ -23,7 +23,7 @@ export const Session = () => {
     }
     return (
         <div>
-            <Title level={4} className="session-title-bar" style={session ? {} : {textAlign:'center'}}>
+            <Title level={4} className="session-title-bar" style={session ? {} : {justifyContent:'center'}}>
                 {session ? <>
                     <Trans text={TextCodes.code} />
                     :<span className="session-title-code">{session.code}</span>

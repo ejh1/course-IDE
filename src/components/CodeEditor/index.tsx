@@ -1,15 +1,17 @@
 import React from 'reactn';
 import debounce from 'lodash/debounce';
+import omit from 'lodash/omit';
 import { Tabs, Button, Switch, Icon, Typography } from 'antd';
 const { Title } = Typography;
 const { TabPane } = Tabs;
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
-import { ITextData, JSInterpreter } from '@services/debugger';
+import { ITextData, JSInterpreter, IToken, TokenType } from '@services/debugger';
 
 import './styles.scss';
 import { IConsoleItem, ISnippet, IDisplaySnippet, SnippetType } from '@services/class-data';
 import { translate, TextCodes } from '@components/Trans';
 import { SandboxComm, SandboxMsgType, IDebugNextData, IDebugMsgData } from '@services/SandboxComm';
+import sortedIndexBy from 'lodash/sortedIndexBy';
 
 interface IProps {
     loadedData : {[key: string]: string};
@@ -27,13 +29,16 @@ export default class CodeEditor extends React.Component<IProps, IState> {
     };
     anyBreakpoints: boolean = false;
     breakpointLines: Record<number, boolean> = {};
+    breakpointLinesAr: number[] = [];
     breakpointDecorations: string[] = [];
     debugLineHighlight: string[] = [];
     debugVariableDecorations: string[] = [];
     editorContainer: HTMLDivElement;
     gotDebugError: boolean  = false;
-    debugContentWidget: monaco.editor.IContentWidget;
+    debugContentWidget: DebugWidget;
+    debugVariableWidget: DebugWidget;
     sandboxComm: SandboxComm;
+    debugVariables: IToken[];
     setRef = (element: HTMLDivElement) => {
         this.editorContainer = element;
         this.componentWillUnmount();
@@ -50,10 +55,12 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             minimap:{enabled:false},
             automaticLayout: true,
             lineNumbersMinChars: 3,
-            lineDecorationsWidth: 5,
+            lineDecorationsWidth: 19,
+            folding: false,
         });
         this._editor.onDidChangeModelContent(debounce(this.onCodeChange));
         this._editor.onMouseDown(this.onEditorMouseDown);
+        this._editor.onMouseMove(this.onEditorMouseMove);
         this._editor.setModel(this.tabs[this.state.chosenTabIndex].model);
     }
     componentWillUnmount = () => this._editor && this._editor.dispose();
@@ -61,15 +68,20 @@ export default class CodeEditor extends React.Component<IProps, IState> {
     componentDidUpdate = ({loadedData: oldData, snippetToDisplay: oldSnippet, shareCode: oldShareCode}: IProps) => {
         const {loadedData: newData, snippetToDisplay: newSnippet, shareCode} = this.props;
         let dataToUse: Record<string, string>;
+        let replacedData: typeof dataToUse = {};
         if (newData && newData !== oldData) {
             dataToUse = newData;
         } else if (newSnippet && (!oldSnippet || newSnippet.id !== oldSnippet.id || newSnippet.timestamp !== oldSnippet.timestamp)) {
             dataToUse = newSnippet.code || {};
+            if (oldSnippet && oldSnippet.code) {
+                replacedData = oldSnippet.code;
+            }
         }
         if (oldShareCode !== shareCode && shareCode) {
             this.dispatch.setSharedCode(this.getExecutionData());
         }
-        if (dataToUse) {
+        // Reload data only if something has changed
+        if (dataToUse && Object.entries(dataToUse).some(([key, val]) => replacedData[key] !== val)) {
             this.stopDebugging();
             this.tabs.forEach((tab, idx) => {
                 (tab.model as monaco.editor.ITextModel).setValue(dataToUse[tab.lang] || '');
@@ -97,10 +109,24 @@ export default class CodeEditor extends React.Component<IProps, IState> {
         const tab = this.tabs[chosenTabIndex];
         this._editor.setModel(tab.model);
         tab.viewState && this._editor.restoreViewState(tab.viewState);
+        if (chosenTabIndex === 0 && this.breakpointLinesAr.length) {
+            this.renderBreakpoints();
+        }
     }
     onCodeChange = () => {
         if (this.global.shareCode) {
             this.dispatch.setSharedCode(this.getExecutionData());
+        }
+        if (this.state.chosenTabIndex === 0 && this.breakpointLinesAr.length) {
+            const lineCount = this.tabs[0].model.getLineCount();
+            if (lineCount <= this.breakpointLinesAr[this.breakpointLinesAr.length - 1]) {// breakpointLinesAr is 0 based
+                this.breakpointLinesAr = this.breakpointLinesAr.filter(line => line <= lineCount-1);
+                this.breakpointLines = this.breakpointLinesAr.reduce((acc, line) => {
+                    acc[line] = true;
+                    return acc;
+                }, {} as CodeEditor['breakpointLines']);
+                this.renderBreakpoints();
+            }
         }
     }
     startSandbox = () => {
@@ -125,6 +151,11 @@ export default class CodeEditor extends React.Component<IProps, IState> {
                 this.debugAnnotationCallback(line, start, end, msg, isException);
                 break;
             }
+            case SandboxMsgType.RETURN_VAR_VALUE: {
+                const {token, value} = data as {token: IToken, value: {value: any}};
+                this.showDebugVariableValue(token, value);
+                break;
+            }
         }
         console.log(type, data);
     }
@@ -136,6 +167,15 @@ export default class CodeEditor extends React.Component<IProps, IState> {
         this.startSandbox();
         const executionData: {} = this.getExecutionData();
         this.sandboxComm.send(SandboxMsgType.RUN, executionData);
+    }
+    renderBreakpoints = () => {
+        this.breakpointDecorations = this._editor.deltaDecorations(this.breakpointDecorations,
+            this.breakpointLinesAr.map(line => ({
+                range: new monaco.Range(+line+1, 1, +line+1, 1),
+                options: {
+                    linesDecorationsClassName: 'breakpoint'
+                }
+            })));
     }
     onEditorMouseDown = (event: monaco.editor.IEditorMouseEvent) => {
         if (this.state.chosenTabIndex !== 0) {
@@ -153,15 +193,41 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             if (this.sandboxComm) {
                 this.sandboxComm.send(SandboxMsgType.SET_BREAKPOINTS, breakpointLines);
             }
-            const lines = Object.keys(breakpointLines);
-            this.anyBreakpoints = !!lines.length;
-            this.breakpointDecorations = this._editor.deltaDecorations(this.breakpointDecorations,
-                lines.map(line => ({
-                    range: new monaco.Range(+line+1, 1, +line+1, 1),
-                    options: {
-                        linesDecorationsClassName: 'breakpoint'
-                    }
-                })))
+            this.breakpointLinesAr = Object.keys(breakpointLines).map((k) => +k);
+            this.renderBreakpoints();
+        }
+    }
+    onEditorMouseMove = (event: monaco.editor.IEditorMouseEvent) => {
+        let identifier: IToken;
+        if (this.state.chosenTabIndex === 0 && this.debugVariables && event.target.position) {
+            let {lineNumber, column} = event.target.position;
+            const position = {line: lineNumber - 1, offset: column - 1};
+            const normalize = (line: number, offset: number) => line * 10000 + offset;
+            const normalizeToken = ({line, offset}: Pick<IToken, 'line' | 'offset'>) => normalize(line, offset);
+            const index = sortedIndexBy(this.debugVariables, position, normalizeToken);
+            identifier = this.debugVariables[index];
+            const normalizedPos = normalizeToken(position);
+            if (identifier) {
+                if (normalizedPos < normalizeToken(identifier)) {
+                    identifier = this.debugVariables[index - 1];
+                }
+            }
+            if (identifier && (normalizedPos < normalizeToken(identifier) || normalizedPos > normalizeToken({line: identifier.line, offset: identifier.offset + (identifier.value as string).length}))) {
+                identifier = null;
+            }
+        }
+        if (this.debugVariableWidget) {
+            if (event.target.detail === this.debugVariableWidget.id) {// Hovering over the tooltip
+                return;
+            }
+            const {position: {line, offset}} = this.debugVariableWidget;
+            if (!identifier || line !== identifier.line || offset !== identifier.offset) {
+                this._editor.removeContentWidget(this.debugVariableWidget);
+                this.debugVariableWidget = null;
+            }
+        }
+        if (identifier) {
+            this.sandboxComm.send(SandboxMsgType.GET_VAR_VALUE, identifier);
         }
     }
     debug = () => {
@@ -169,7 +235,9 @@ export default class CodeEditor extends React.Component<IProps, IState> {
         this.setState({debugging: true});
         const data: IDebugMsgData = this.getExecutionData() as unknown as IDebugMsgData;
         const {model} = this.tabs[0];
-        data.tokens = JSInterpreter.tokenize(model.getLinesContent());
+        const tokens = JSInterpreter.tokenize(model.getLinesContent());
+        this.debugVariables = tokens.filter(({type}) => type === TokenType.Identifier);
+        data.tokens = tokens;
         data.breakpointLines = this.breakpointLines;
         
         this.sandboxComm.send(SandboxMsgType.DEBUG, data);
@@ -203,7 +271,16 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             this.debugContentWidget = null;
         }
         const msgText = translate(msg.text, this.global.language.code, msg.params);
-        this._editor.addContentWidget(this.debugContentWidget = new DebugWidget(msgText, line+1, start+1, isException));
+        this._editor.addContentWidget(this.debugContentWidget = new DebugWidget(msgText, {line, offset:start}, true, isException));
+    }
+    showDebugVariableValue = (token: IToken, {value}: any) => {
+        if (this.debugVariableWidget) {
+            this._editor.removeContentWidget(this.debugVariableWidget);
+        }
+        if (typeof value === 'string') {
+            value = `"${value}"`;
+        }
+        this._editor.addContentWidget(this.debugVariableWidget = new DebugWidget(value.toString(), token));
     }
     clearDebugDecorations = () => {
         this.debugLineHighlight = this._editor.deltaDecorations(this.debugLineHighlight, []);
@@ -225,6 +302,7 @@ export default class CodeEditor extends React.Component<IProps, IState> {
         this.gotDebugError = false;
         this._editor.updateOptions({readOnly:false});
         this.clearDebugDecorations();
+        this.debugVariables = null;
         if (this.sandboxComm) {
             this.sandboxComm.send(SandboxMsgType.DEBUG_STOP);
             this.sandboxComm.dispose();
@@ -236,7 +314,7 @@ export default class CodeEditor extends React.Component<IProps, IState> {
         const code = this.getExecutionData();
         if (snippetToDisplay && snippetToDisplay.type === SnippetType.USER) {
             this.dispatch.saveSnippet({
-                ...snippetToDisplay,
+                ...omit(snippetToDisplay, ['type']),
                 code
             })
         } else {
@@ -252,20 +330,21 @@ export default class CodeEditor extends React.Component<IProps, IState> {
     }
     changeSnippetName = () => {
         const {snippetToDisplay} = this.props;
-        if (snippetToDisplay.type !== SnippetType.USER) { // Cant rename a session snippet
-            return;
-        }
         const newName = (window.prompt(translate(TextCodes.enterName, this.global.language.code), snippetToDisplay.name) || '').trim();
         if (newName && newName !== snippetToDisplay.name) {
-            this.dispatch.saveSnippet({...snippetToDisplay, name: newName});
+            this.dispatch.saveSnippet({...omit(snippetToDisplay, ['type']), name: newName});
         }
     }
     renderSnippetBar() {
         const {snippetToDisplay} = this.props;
         return (
             <div className="snippet-bar">
-                <span onClick={this.changeSnippetName} className="snippet-title">
-                    <Title level={4} >{snippetToDisplay && snippetToDisplay.name}</Title>
+                <span className="snippet-title">
+                    {snippetToDisplay &&
+                    <Title level={4} >
+                        {snippetToDisplay.name}
+                        {snippetToDisplay.type === SnippetType.USER && <Icon theme="twoTone" type="edit" onClick={this.changeSnippetName} />}
+                    </Title>}
                 </span>
                 {this.global.session &&
                     <Switch
@@ -280,13 +359,14 @@ export default class CodeEditor extends React.Component<IProps, IState> {
         );
     }
     render() {
+        const {debugging} = this.state;
         return (<div className="code-editor">
             { this.global.user && this.renderSnippetBar() }
             <Tabs
                 activeKey={this.tabs[this.state.chosenTabIndex].name}
                 className="ce-tabs"
                 onChange={this.tabChanged} type="card"
-                tabBarExtraContent={this.state.debugging ?(
+                tabBarExtraContent={debugging ?(
                     <React.Fragment>
                         <Button onClick={this.stopDebugging} icon="stop" shape="circle"/>
                         <Button onClick={this.debugStep.bind(this, false)} icon="step-forward" shape="circle"/>
@@ -300,36 +380,41 @@ export default class CodeEditor extends React.Component<IProps, IState> {
             >
                 {this.tabs.map(({name}) => <TabPane tab={name} key={name} />)}
             </Tabs>
-            <div className="ce-editor" ref={this.setRef} />
+            <div className={'ce-editor' + (debugging ? ' debug-mode' : '')} ref={this.setRef} />
         </div>)
     }
 }
 
 let nextWidgetId = 0;
-class DebugWidget {
+class DebugWidget implements monaco.editor.IContentWidget {
     message: string;
     line: number;
     column: number;
     isError: boolean;
+    isAnnotation: boolean;
     domNode: HTMLDivElement;
+    position: Pick<IToken, 'line'|'offset'>;
+    contentPosition: ReturnType<monaco.editor.IContentWidget['getPosition']>
     id: string = 'debug.widget' + nextWidgetId++;
-    constructor(message: string, line: number, column: number, isError: boolean) {
-        Object.assign(this, {message, line, column, isError});
+    constructor(message: string, position: DebugWidget['position'], isAnnotation: boolean = false, isError: boolean = false) {
+        const {line, offset} = position;
+        const contentPosition = {
+            position : {
+                lineNumber: line + 1,
+                column: offset + 1
+            },
+            preference: [monaco.editor.ContentWidgetPositionPreference.ABOVE, monaco.editor.ContentWidgetPositionPreference.BELOW]
+        }
+        Object.assign(this, {message, position, contentPosition, isError, isAnnotation});
     }
     getDomNode = () => {
         if (!this.domNode) {
             const div = this.domNode = document.createElement('div');
             div.textContent = this.message;
-            div.className = 'debug-widget' + (this.isError ? ' error' : '');
+            div.className = 'debug-widget' + (this.isError ? ' error' : '') + (this.isAnnotation ? ' annotation' : '');
         }
         return this.domNode;
     }
     getId = () => this.id;
-    getPosition = () => ({
-        position: {
-            lineNumber: this.line,
-            column: this.column
-        },
-        preference: [monaco.editor.ContentWidgetPositionPreference.ABOVE, monaco.editor.ContentWidgetPositionPreference.BELOW]
-    })
+    getPosition = () => this.contentPosition;
 }

@@ -1,5 +1,5 @@
 import React, { useGlobal, useDispatch, useState } from 'reactn';
-import { Select, Button, Input, Tag, Badge } from 'antd';
+import { Select, Button, Input, Tag, Badge, Icon } from 'antd';
 const { Option } = Select;
 import { Splitter } from '@components/Splitter';
 import { useEffect, FC } from 'react';
@@ -30,6 +30,7 @@ const sideIcons: Record<SideContent, string> = {
 export const App = () => {
     const [language, setLanguage] = useGlobal('language');
     const [user] = useGlobal('user');
+    const [userData] = useGlobal('userData');
     const [session] = useGlobal('session');
     const [sessionStudentsCount] = useGlobal('sessionStudentsCount');
     const [studentSession] = useGlobal('studentSession');
@@ -39,17 +40,20 @@ export const App = () => {
     const [snippetToDisplay] = useGlobal('snippetToDisplay');
     const dispatch = useDispatch();
     const [typedCode, setTypedCode] = useState('');
+    const codeValid = /^[a-zA-Z0-9]{5}$/.test(typedCode);
     const [sideContent, setSideContent] = useState<SideContent>(SideContent.Directory)
     const sideContentList = [SideContent.Directory];
     const changeName = () => {
-        const name = prompt(translate(TextCodes.enterName, language.code));
-        dispatch.setStudentSessionDatum('name', name);
+        const name = (prompt(translate(TextCodes.enterName, language.code), studentData.name) || '').trim();
+        if (name && name != studentData.name) {
+            dispatch.setStudentSessionDatum('name', name);
+        }
     }
     const joinSession = () => {
         const name = prompt(translate(TextCodes.enterName, language.code));
         dispatch.joinSession(typedCode.toUpperCase(), name);
     }
-    if (user && !user.isAnonymous) {
+    if (user && !user.isAnonymous && !studentSession) {
         sideContentList.push(SideContent.Session);
     }
     useEffect(() => {dispatch.checkLogin()}, []);
@@ -75,18 +79,20 @@ export const App = () => {
                 { !session && 
                     <span style={{marginLeft: '20px'}}>{ studentSession ?
                     <>
-                        <Button onClick={changeName}>{studentData && studentData.name || translate(TextCodes.enterName, language.code)}</Button>
+                        {studentData && studentData.name || translate(TextCodes.enterName, language.code)}
+                        <Icon type="edit" theme="twoTone" onClick={changeName} />
                         <Tag closable onClose={() => dispatch.leaveSession()}> {studentSession.code}</Tag>
                     </> :
                     <>
                         <Button
                             className="join-session-btn"
-                            disabled={!/^[a-zA-Z0-9]{5}$/.test(typedCode)}
+                            disabled={!codeValid}
                             onClick={joinSession}
                         >
                             <Trans text={TextCodes.join} />
                         </Button>
                         <Input
+                            onKeyPress={(e) => e.key === 'Enter' && codeValid && joinSession()}
                             className="join-session-input"
                             style={{width:'90px'}}
                             placeholder={translate(TextCodes.code, language.code)}
@@ -96,7 +102,10 @@ export const App = () => {
                     </>
                     }</span>
                 }
-                { user && user.email && <span className="email">{user.email}</span>}
+                { user && user.email && <span className="email">
+                    {userData && userData.isInstructor && <><Tag color="blue"><Trans text={TextCodes.instructor}/></Tag>&nbsp;</>}
+                    {user.email}
+                </span>}
                 {   !studentSession &&
                     (user && !user.isAnonymous ? <Button onClick={logout}><Trans text={TextCodes.logout} /></Button> :
                     <Button onClick={login}><Trans text={TextCodes.login} /></Button>)
