@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+body {
+    padding: 0;
+    margin: 0;
+}
+#outer {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+#header {
+    background-color: #e9e7e3;
+    color: #606161;
+    padding: 10px 34px;
+    position: relative;
+}
+#back {
+    position: absolute;
+    left: 5px;
+    top: calc(50% - 10px);
+    background-color: white;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+#course-title {
+    font-size: 20px;
+    font-weight: 700;
+}
+#course-description {
+    font-size: 14px;
+}
+#course-body {
+    flex-grow: 1;
+}
+#course-body iframe {
+    border: none;
+    width: 100%;
+    height: 100%;
+}
+.list-item {
+    padding: 10px 34px;
+    border-bottom: solid 1px lightgray;
+    cursor: pointer;
+}
+.list-item:hover {
+    background-color: lightgray;
+}
+#loader {
+    position: fixed;
+    height: 100%;
+    width: 100%;
+    top: 0;
+    left: 0;
+    background-color: rgba(256, 256, 256, 0.5);
+}
+.loader {
+  border: 16px solid #f3f3f3;
+  border-top: 16px solid gray;
+  border-radius: 50%;
+  width: 120px;
+  height: 120px;
+  animation: spin 2s linear infinite;
+}
+#loader .loader {
+    margin: auto;
+    margin-top: 30%;
+}
+.student-header {
+    border-bottom: solid 1px gray;
+    padding: 5px 0;
+}
+.student-header button {
+    border: none;
+    background: none;
+    cursor: pointer;
+}
+.student-header span {
+    padding: 5px;
+}
+.student-desc {
+    background-color: #e9e7e3;
+    border-radius: 15px;
+    margin: 5px;
+    padding: 10px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+        </style>
+        <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js" integrity="sha256-4+XzXVhsDmqanXGHaHvgh1gMQKX40OUvDEBTu8JcmNs=" crossorigin="anonymous"></script>
+        <script>
+let COURSE_ID;
+const filesById = {};
+let pendingCount = 0;
+const getFile = async (id) => {
+    try {
+        $('#loader').show();
+        pendingCount++;
+        if (!filesById[id]) {
+            filesById[id] = JSON.parse(await (await fetch(`https://firebasestorage.googleapis.com/v0/b/course-ide-courses/o/${id}.json?alt=media`)).text())
+        }
+        return filesById[id];
+    } finally {
+        if (!--pendingCount) {
+            $('#loader').hide();
+        }
+    }
+}
+const loadCourse = async () => {
+    window.onpopstate = handlePath;
+    if (location.host.includes('localhost')) {
+        window.history.pushState({}, 'course', '/c/ABC12');
+    }
+    handlePath();
+}
+const handlePath = () => {
+    const [courseId, studentId, itemId] = ['c', 's', 'i'].map((code) =>
+        (location.pathname.match(new RegExp(`/${code}/([^/]+)`)) || [])[1]);
+    if (!courseId) {
+        console.error('no course found');
+    }
+    COURSE_ID = courseId;
+    if (studentId) {
+        if (itemId) {
+            displayItem(studentId, itemId);
+        } else {
+            displayStudent(studentId);
+        }
+    } else {
+        displayCourse(courseId);
+    }
+}
+const setHeader = (name, description, backHandler) => {
+    name && (document.title = name);
+    const isRTL = (name.match(/[\u0591-\u07FF\uFB1D-\uFDFD\uFE70-\uFEFC]/g) || []).length / name.length > 0.5;
+    $('body').css('direction', isRTL ? 'rtl' : '');
+    $('#course-title').text(name || '');
+    $('#course-desc').text(description || '');
+    $('#back').toggle(!!backHandler).off('click').click(backHandler).text(isRTL ? '>' : '<');
+}
+const goto = (studentId, itemId) => {
+    let path = `/c/${COURSE_ID}`;
+    if (studentId) {
+        path += `/s/${studentId}`;
+        if (itemId) {
+            path += `/i/${itemId}`;
+        }
+    }
+    window.history.pushState({}, '', path);
+    handlePath();
+}
+const displayCourse = async (courseId) => {
+    const {name, description, students} = await getFile(courseId);
+    setHeader(name, description);
+    const container = $('#course-body').html('');
+    for (const {id, name, description} of students) {
+        $('<div class="list-item" />').text(name).click(() => goto(id)).appendTo(container);
+    }
+}
+
+const displayStudent = async (studentId) => {
+    const [course, student] = await Promise.all([
+        getFile(COURSE_ID),
+        getFile(studentId)
+    ]);
+    const {name} = (course.students || []).find(({id}) => id === studentId) || {};
+    const {description, items} = student;
+    setHeader(name, description, () => goto());
+    const container = $('#course-body').html('');
+    (items || []).forEach((({id, name}) => {
+        $('<div class="list-item" />').text(name).click(() => goto(studentId, id)).appendTo(container);
+    }))
+}
+
+const displayItem = async (studentId, itemId) => {
+    const student = await getFile(studentId);
+    const {name, description, code} = (student.items || []).find(({id}) => itemId === id) || {};
+    setHeader(name, description, () => goto(studentId));
+    const iframe = $('<iframe/>').appendTo($('#course-body').html(''));
+    const {css, javascript, html} = code;
+    if (html) {
+        iframe.contents().find('html').html(html);
+    }
+    const head = iframe[0].contentDocument.head;
+    if (css) {
+        $('<style/>').attr('type', 'text/css').text(css).appendTo(head);
+    }
+    if (javascript) {
+        $('<script/>').attr('type', 'text/javascript').text(javascript).appendTo(head);
+    }
+}
+        </script>
+    </head>
+    <body>
+        <div id="outer">
+            <div id="header">
+                <div id="back">&gt;</div>
+                <div id="course-title"></div>
+                <div id="course-desc"></div>
+            </div>
+            <div id="course-body"></div>
+        </div>
+        <script>loadCourse();</script>
+        <div id="loader">
+            <div class="loader" ></div>
+        </div>
+    </body>
+</html>

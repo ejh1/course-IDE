@@ -14,24 +14,33 @@ import { FileView } from '@components/FileView';
 import CodeEditor from '@components/CodeEditor';
 import Sandbox from '@components/Sandbox';
 import { Session } from '@components/Session';
+import { Course } from '@components/Course';
+import { StudentCourse } from '@components/StudentCourse';
 
 enum SideContent {
     Directory = 'directory',
     Session = 'classes',
+    Course = 'course',
+    StudentCourse = 'student-course',
 }
 const SideComponents: Record<SideContent, FC> = {
     [SideContent.Directory]: FolderView,
     [SideContent.Session]: Session,
+    [SideContent.Course]: Course,
+    [SideContent.StudentCourse]: StudentCourse,
 };
 const sideIcons: Record<SideContent, string> = {
     [SideContent.Directory] : 'folder-open',
     [SideContent.Session] : 'solution',
+    [SideContent.Course] : 'team',
+    [SideContent.StudentCourse] : 'cloud',
 };
 export const App = () => {
     const [language, setLanguage] = useGlobal('language');
     const [user] = useGlobal('user');
     const [userData] = useGlobal('userData');
     const [session] = useGlobal('session');
+    const [studentCourses] = useGlobal('studentCourses');
     const [sessionStudentsCount] = useGlobal('sessionStudentsCount');
     const [studentSession] = useGlobal('studentSession');
     const [studentData] = useGlobal('sessionStudentData');
@@ -53,8 +62,16 @@ export const App = () => {
         const name = prompt(translate(TextCodes.enterName, language.code));
         dispatch.joinSession(typedCode.toUpperCase(), name);
     }
-    if (user && !user.isAnonymous && !studentSession) {
-        sideContentList.push(SideContent.Session);
+    if (user && !user.isAnonymous) {
+        if (!studentSession) {
+            sideContentList.push(SideContent.Session);
+        }
+        if (userData?.isInstructor) {
+            sideContentList.push(SideContent.Course);
+        }
+        if (studentCourses.length) {
+            sideContentList.push(SideContent.StudentCourse);
+        }
     }
     useEffect(() => {dispatch.checkLogin()}, []);
     useEffect(() => {dispatch.getFolder('root.json')}, [language]);
@@ -103,7 +120,7 @@ export const App = () => {
                     }</span>
                 }
                 { user && user.email && <span className="email">
-                    {userData && userData.isInstructor && <><Tag color="blue"><Trans text={TextCodes.instructor}/></Tag>&nbsp;</>}
+                    {userData?.isInstructor && <><Tag color="blue"><Trans text={TextCodes.instructor}/></Tag>&nbsp;</>}
                     {user.email}
                 </span>}
                 {   !studentSession &&

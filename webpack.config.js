@@ -99,7 +99,7 @@ module.exports = (env, argv) => {
                     credentials: new AWS.SharedIniFileCredentials({profile: 'private'})
                 },
                 s3UploadOptions: {
-                Bucket: 'demo-mtova-course', // Your bucket name
+                Bucket: 'course-ide-staging', // Your bucket name
                 // Here we set the Content-Encoding header for all the gzipped files to 'gzip'
                 ContentEncoding(fileName) {
                     if (/\.(js|css|map)$/.test(fileName)) {

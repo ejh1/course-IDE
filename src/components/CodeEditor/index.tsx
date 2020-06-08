@@ -312,9 +312,9 @@ export default class CodeEditor extends React.Component<IProps, IState> {
     saveSnippet = () => {
         const {snippetToDisplay} = this.props;
         const code = this.getExecutionData();
-        if (snippetToDisplay && snippetToDisplay.type === SnippetType.USER) {
+        if (snippetToDisplay && [SnippetType.USER, SnippetType.COURSE_ITEM].includes(snippetToDisplay.type)) {
             this.dispatch.saveSnippet({
-                ...omit(snippetToDisplay, ['type']),
+                ...snippetToDisplay,
                 code
             })
         } else {
@@ -332,7 +332,7 @@ export default class CodeEditor extends React.Component<IProps, IState> {
         const {snippetToDisplay} = this.props;
         const newName = (window.prompt(translate(TextCodes.enterName, this.global.language.code), snippetToDisplay.name) || '').trim();
         if (newName && newName !== snippetToDisplay.name) {
-            this.dispatch.saveSnippet({...omit(snippetToDisplay, ['type']), name: newName});
+            this.dispatch.saveSnippet({...snippetToDisplay, name: newName});
         }
     }
     renderSnippetBar() {
@@ -342,6 +342,7 @@ export default class CodeEditor extends React.Component<IProps, IState> {
                 <span className="snippet-title">
                     {snippetToDisplay &&
                     <Title level={4} >
+                        {snippetToDisplay.type === SnippetType.COURSE_ITEM && <><Icon theme="twoTone" type="cloud" />&nbsp;</>}
                         {snippetToDisplay.name}
                         {snippetToDisplay.type === SnippetType.USER && <Icon theme="twoTone" type="edit" onClick={this.changeSnippetName} />}
                     </Title>}

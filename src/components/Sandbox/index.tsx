@@ -12,7 +12,7 @@ export default () => {
     }, [sandboxCounter]);
     return (
         <div className="sandbox">
-            <iframe id="sandbox-frame" className="sandbox-frame" sandbox="allow-scripts allow-popups allow-modals" />
+            <iframe id="sandbox-frame" className="sandbox-frame" sandbox="allow-scripts allow-popups allow-modals allow-same-origin" />
             <Console />
         </div>
     );

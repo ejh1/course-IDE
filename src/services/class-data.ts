@@ -3,6 +3,9 @@ import firebase, { firestore } from 'firebase/app';
 import _get from 'lodash/get';
 import 'firebase/auth';
 import 'firebase/firestore';
+import { keyBy } from 'lodash';
+import { TextCodes, translate } from '@components/Trans';
+import { State } from 'reactn/default';
 
 const firebaseConfig = {
     apiKey: "AIzaSyDvSrdLS9tjp7_SINpB4YWDnYaJXT7Gr20",
@@ -46,7 +49,8 @@ export enum SnippetType {
     NONE,
     USER,
     SESSION,
-    STUDENT
+    STUDENT,
+    COURSE_ITEM,
 }
 export interface IDisplaySnippet extends ISnippet {
     type: SnippetType;
@@ -55,6 +59,35 @@ export interface ILanguage {
     code: string;
     title: string;
     pathPrefix: string;
+}
+export interface ICourseStudentItem {
+    id: string;
+    courseId: string;
+    courseStudentId: string;
+    studentId: string;
+    isActive: boolean;
+    timestamp: number;
+    name: string;
+    description: string;
+    code: Record<string, string>;
+}
+export interface ICourseStudent {
+    id?: string;
+    code: string;
+    courseId: string;
+    email: string;
+    name: string;
+    isActive: boolean;
+    description: string;
+}
+export interface ICourse {
+    id?: string;
+    code?: string;
+    name: string;
+    description: string;
+}
+export interface ICourseWS extends ICourse {
+    students: ICourseStudent[];
 }
 export const ROOT_FOLDER = 'root.json';
 export const languages: ILanguage[] = [
@@ -93,6 +126,13 @@ const fetchFile = async (file: string) => {
     const response = await fetch(`${CLASSES_BASE_PATH}${encodeURIComponent(file)}?alt=media`);
     return response.ok ? response.text() : '';
 }
+const getStudentCourseItem = (global: State, id: string) => {
+    let item: ICourseStudentItem = null;
+    Object.entries(global.studentCoursesItems).some(([key, items]) => item = items.find((item) => item.id === id));
+    return item;
+};
+const getServerTS = () => firebase.firestore.FieldValue.serverTimestamp() as unknown as number;
+const withIds = (docs: firestore.DocumentData[]) => docs.map(doc => ({...doc.data(), id: doc.id}));
 export const login = () => {
     const provider = new firebase.auth.GoogleAuthProvider();
     provider.setCustomParameters({
@@ -110,18 +150,23 @@ export const initializeGlobalState = () => {
             unsubs.forEach(unsub => unsub());
         }
     }
+    // For Teacher - for course students per course
+    const courseStudentSubscriptions: Record<string, any> = {};
     if (initialized) {
         console.error('Already initialized');
         return;
     }
     initialized = true;
-    const UsersCollection = firebase.firestore().collection('users');
-    const SessionsCollection = firebase.firestore().collection('sessions');
-    const SessionStudentCollection = firebase.firestore().collection('session-student');
+    type Collections = Record<'users' | 'sessions' | 'session-student' | 'courses' | 'course-students' | 'course-student-items',
+        firebase.firestore.CollectionReference>;
+    const collections = ['users', 'sessions', 'session-student', 'courses', 'course-students', 'course-student-items'].reduce((acc, key: keyof Collections) => {
+        acc[key] = firebase.firestore().collection(key);
+        return acc;
+    }, {} as Collections);
     
-    const updateSnippets = (uid: string, snippets: ISnippet[]) => UsersCollection.doc(uid).set({snippets}, {merge: true});
+    const updateSnippets = (uid: string, snippets: ISnippet[]) => collections.users.doc(uid).set({snippets}, {merge: true});
     const updateSessionSnippets = (code: string, snippets: ISnippet[]) => {
-        SessionsCollection.doc(code).update({snippets});
+        collections.sessions.doc(code).update({snippets});
     }
     setGlobal({
         folders : {},
@@ -129,7 +174,11 @@ export const initializeGlobalState = () => {
         console: [],
         sessions: {},
         language: defaultLanguage,
-        shareCode: false
+        shareCode: false,
+        courses: [],
+        courseStudents: {},
+        studentCourses: [],
+        studentCoursesItems: {},
     });
     addReducers({
         checkLogin: (global, dispatch) => {
@@ -140,7 +189,12 @@ export const initializeGlobalState = () => {
                 if (!user.isAnonymous) {
                     dispatch.listenToSessions(user.uid);
                     const instructor = await firebase.firestore().collection('instructor-emails').doc(user.email).get();
-                    dispatch.setUserData({isInstructor: !!instructor.data()});
+                    const isInstructor = !!instructor.data();
+                    dispatch.setUserData({isInstructor});
+                    dispatch.listenToStudentCourses(user);
+                    if (isInstructor) {
+                        dispatch.listenToInstructorCourses(user.uid);
+                    }
                 }
                 const {pendingStudentSession} = global;
                 if (pendingStudentSession) {
@@ -151,8 +205,46 @@ export const initializeGlobalState = () => {
             }
             return {user};
         },
+        listenToInstructorCourses: (global, dispatch, uid: string) => {
+            collections.courses.where('instructorId', '==', uid).onSnapshot((snapshot) => {
+                dispatch.setCourses(snapshot.docs.map(doc => {
+                    const courseId = doc.id;
+                    if (!courseStudentSubscriptions[courseId]) {
+                        setTimeout(() => {
+                            if (!courseStudentSubscriptions[courseId]) {
+                                courseStudentSubscriptions[courseId] =
+                                    collections['course-students'].where('courseId', '==', courseId)
+                                        .onSnapshot((studentsSnapshot) => dispatch.setCourseStudents(courseId, withIds(studentsSnapshot.docs) || []),
+                                        (err) => console.error(`Error getting course students for course ${courseId}: ` + err))
+                            }
+                        }, 1000);
+                    }
+                    return {...doc.data(), id: courseId} as any
+                }));
+            });
+        },
+        setCourseStudents: (global, dispatch, courseId: string, students) => ({courseStudents: {...global.courseStudents, [courseId]: students}}),
+        listenToStudentCourses: (global, dispatch, user: firebase.User) => {
+            collections['course-students'].where('email', '==', user.email).onSnapshot((snapshot) => {
+                dispatch.setStudentCourses(snapshot.docs.map((doc) => ({...doc.data(), id: doc.id})) as any);
+            });
+            collections['course-student-items'].where('studentId', '==', user.uid).onSnapshot((snapshot) => {
+                const studentCoursesItems: Record<string, ICourseStudentItem[]> = {};
+                snapshot.docs.forEach((doc) => {
+                    const data = {...doc.data(), id: doc.id} as ICourseStudentItem;
+                    (studentCoursesItems[data.courseId] || (studentCoursesItems[data.courseId] = [])).push(data)
+                });
+                dispatch.setStudentCourseItems(studentCoursesItems);
+            })
+        },
+        updateStudentCourse: (global, dispatch, studentCourse) => {
+            const copy = {...studentCourse};
+            delete copy.id;
+            collections['course-students'].doc(studentCourse.id).update(copy);
+        },
+        setStudentCourses: (global, dispatch, studentCourses) => ({studentCourses}),
         listenToSessions: (global, dispatch, uid: string) => {
-            UsersCollection.doc(uid).onSnapshot((doc) => {
+            collections.users.doc(uid).onSnapshot((doc) => {
                 const data = doc.data() || {};
                 const {sessions = {}, snippets = []} = data;
                 dispatch.setSnippets(snippets);
@@ -172,9 +264,9 @@ export const initializeGlobalState = () => {
             }, (err) => console.log('lts failed', err));
         },
         listenToSession: (global, dispatch, code: string) => {
-            const unsub1 = SessionsCollection.doc(code)
+            const unsub1 = collections.sessions.doc(code)
                 .onSnapshot((doc) => dispatch.setSession(doc.data() as ISession));
-            const unsub2 = SessionStudentCollection.where('sessionCode', '==', code)
+            const unsub2 = collections['session-student'].where('sessionCode', '==', code)
                 .onSnapshot((snapshot) => {
                     dispatch._processSessionStudentUpdate(snapshot.docChanges());
                 }, (err) => console.log('ss failed', err));
@@ -239,8 +331,8 @@ export const initializeGlobalState = () => {
                 const index = Math.floor(Math.min(Math.random() * letters.length, letters.length - 1));
                 code += letters[index];
             }
-            UsersCollection.doc(global.user.uid).set({sessions: {[code]: firebase.firestore.FieldValue.serverTimestamp()}}, {merge: true});
-            SessionsCollection.doc(code).set({
+            collections.users.doc(global.user.uid).set({sessions: {[code]: getServerTS()}}, {merge: true});
+            collections.sessions.doc(code).set({
                 code,
                 uid: global.user.uid,
                 folder: {children:[]},
@@ -254,7 +346,7 @@ export const initializeGlobalState = () => {
             } else {
                 children = [...children, file];
             }
-            SessionsCollection.doc(code).update({folder: {children}});
+            collections.sessions.doc(code).update({folder: {children}});
         },
         toggleSessionSnippet: (global, dispatch, snippet: ISnippet) => {
             let {session: {code, snippets = []}} = global;
@@ -267,14 +359,14 @@ export const initializeGlobalState = () => {
         },
         endSession: async (global, dispatch, code: string) => {
             unsubscribe(code);
-            UsersCollection.doc(global.user.uid).update({['sessions.' + code]: firebase.firestore.FieldValue.delete()});
-            const docs = await SessionStudentCollection.where('sessionCode', '==', code).get();
+            collections.users.doc(global.user.uid).update({['sessions.' + code]: firebase.firestore.FieldValue.delete()});
+            const docs = await collections['session-student'].where('sessionCode', '==', code).get();
             const promises: Promise<any>[] = [];
             docs.forEach(doc => promises.push(doc.ref.delete()));
             await Promise.all(promises);
             // Delete session only after deleting student entries, because teacher permissions
             // depend on user owning the session
-            SessionsCollection.doc(code).delete();
+            collections.sessions.doc(code).delete();
             dispatch.setSessionStudents({});
         },
         toggleCodeSharing: (global) => {
@@ -368,26 +460,49 @@ export const initializeGlobalState = () => {
                         id,
                         name: studentData.name || 'student',
                     };
+                case SnippetType.COURSE_ITEM:
+                    const item = getStudentCourseItem(global, id);
+                    if (item) {
+                        const {name, code, timestamp} = item;
+                        snippet = {
+                            name : name || translate(TextCodes.newItem, global.language.code),
+                            id,
+                            timestamp,
+                            code: code || {},
+                        }
+                    }
+                    break;
             }
             if (snippet) {
                 snippetToDisplay = {...snippet, type};
             }
             const {session} = global;
             if (session && session.sharingStudent !== sharingStudent) {
-                SessionsCollection.doc(session.code).update({sharingStudent: sharingStudent || firebase.firestore.FieldValue.delete()});
+                collections.sessions.doc(session.code).update({sharingStudent: sharingStudent || firebase.firestore.FieldValue.delete()});
             }
             return {snippetToDisplay};
         },
-        saveSnippet: (global, dispatch, snippet: ISnippet) => {
-            snippet.timestamp = Date.now();
-            const {user: {uid}, snippets, session} = global;
-            updateSnippets(uid, snippets.map(snp => snp.id === snippet.id ? snippet : snp));
-            // Update snippet in session if displayed there
-            if (session) {
-                const {code, snippets = []} = session;
-                if (snippets.some(({id}) => id === snippet.id)) {
-                    updateSessionSnippets(code, snippets.map((s) => s.id === snippet.id ? snippet : s));
-                }
+        saveSnippet: (global, dispatch, snippet: IDisplaySnippet) => {
+            const {id} = snippet;
+            switch (snippet.type) {
+                case SnippetType.USER:
+                    snippet.timestamp = Date.now();
+                    const {user: {uid}, snippets, session} = global;
+                    updateSnippets(uid, snippets.map(snp => snp.id === id ? snippet : snp));
+                    // Update snippet in session if displayed there
+                    if (session) {
+                        const {code, snippets = []} = session;
+                        if (snippets.some((snp) => snp.id === id)) {
+                            updateSessionSnippets(code, snippets.map((s) => s.id === id ? snippet : s));
+                        }
+                    }
+                    break;
+                case SnippetType.COURSE_ITEM:
+                    const item = getStudentCourseItem(global, id);
+                    dispatch.updateStudentCourseItem({...item, code: snippet.code})
+                    break;
+                default:
+                    console.error('savesnippet called on invalid type: ' + snippet.type);
             }
         },
         removeSnippet: (global, dispatch, snippet: ISnippet) => {
@@ -450,13 +565,13 @@ export const initializeGlobalState = () => {
         },
         setStudentSessionDatum: (global, _dispatch, type: keyof ISessionStudentData, data: any) => {
             const {user: {uid}, studentSession: {code}} = global;
-            SessionStudentCollection.doc(`${uid}_${code}`).update({[type]: data});
+            collections['session-student'].doc(`${uid}_${code}`).update({[type]: data});
         },
         setStudentSessionData: (global, dispatch, sessionStudentData: ISessionStudentData) => ({sessionStudentData}),
         joinSessionAfterLogin: async (global, dispatch, user: firebase.User) => {
             const {uid} = user;
             const {pendingStudentSession: {code, name}} = global;
-            const sessionDocRef = SessionsCollection.doc(code);
+            const sessionDocRef = collections.sessions.doc(code);
             const session = await sessionDocRef.get();
             if (!session.data()) {
                 alert('Session not found');
@@ -471,10 +586,10 @@ export const initializeGlobalState = () => {
                     dispatch.setStudentSession(session);
                 }
             });
-            const docRef = SessionStudentCollection.doc(`${uid}_${code}`);
+            const docRef = collections['session-student'].doc(`${uid}_${code}`);
             const unsub2 = docRef.onSnapshot((doc) => dispatch.setStudentSessionData(doc.data() as ISessionStudentData),
                 err => console.log('student ss failed', err));
-            const unsub3 = UsersCollection.doc(uid).onSnapshot((doc) => {
+            const unsub3 = collections.users.doc(uid).onSnapshot((doc) => {
                 const data = doc.data();
                 if (data) {
                     const {snippets = []} = data;
@@ -492,8 +607,74 @@ export const initializeGlobalState = () => {
                 dispatch.setStudentSession(undefined);
                 dispatch.setStudentSessionData(undefined);
                 unsubscribe(code);
-                SessionStudentCollection.doc(`${uid}_${code}`).delete();
+                collections['session-student'].doc(`${uid}_${code}`).delete();
             }
-        }
+        },
+        setCourses: (global, dispatch, courses) => ({courses}),
+        addCourse: (global, dispatch, course) => {
+            const {students} = course;
+            delete course.students;
+            course.instructorId = global.user.uid;
+            collections.courses.add(course).then((docRef) => {
+                // Now add the students
+                const courseId = docRef.id;
+                students.forEach((student: ICourseStudent) =>
+                    collections['course-students'].add({...student, courseId}).catch(err => console.error('Error adding course student: ' + err)))
+            }).catch(err => console.error('Error adding course: ' + err));
+        },
+        updateCourse: (global, dispatch, course: ICourseWS) => {
+            const {students, id: courseId} = course;
+            delete course.students;
+            delete course.id;
+            collections.courses.doc(courseId).update(course).catch(err => console.error('Error updating course: ' + err));
+            const existingStudents = keyBy(global.courseStudents[courseId], 'id');
+            const currentStudents: Record<string, boolean> = {};
+            students.forEach((student) => {
+                const {id} = student;
+                delete student.id;
+                if (!id) {
+                    collections['course-students'].add({...student, courseId}).catch(err => console.error('Error adding course student: ' + err));
+                } else {
+                    currentStudents[id] = true;
+                    const existing = existingStudents[id];
+                    if (['name', 'email', 'isActive'].some((key: keyof ICourseStudent) => student[key] !== existing[key])) {
+                        const copy = {...student};
+                        delete copy.id;
+                        collections['course-students'].doc(id).update(copy).catch(err => console.error('Error updating course student: ' + err));
+                    }
+                }
+            });
+            Object.keys(existingStudents).forEach((id) => {
+                if (!currentStudents[id]) {
+                    collections['course-students'].doc(id).delete().catch(err => console.error('Error removing course student: ' + err));
+                }
+            });
+        },
+        deleteCourse: async (global, dispatch, courseId) => {
+            const {courses, courseStudents} = global;
+            // Stop listening to student updates
+            const unsub = courseStudentSubscriptions[courseId];
+            delete courseStudentSubscriptions[courseId];
+            unsub();
+            collections.courses.doc(courseId).delete();
+        },
+        addStudentCourseItem: (global, dispatch, studentCourse: ICourseStudent) => {
+            const newItem: Partial<ICourseStudentItem> = {
+                courseStudentId: studentCourse.id,
+                courseId: studentCourse.courseId,
+                studentId: global.user.uid,
+                isActive: false,
+                timestamp: getServerTS(),
+            };
+            collections['course-student-items'].add(newItem).catch(err => console.error(`Error adding course item: ` + err))
+        },
+        updateStudentCourseItem: (global, dispatch, item: ICourseStudentItem) => {
+            const copy = {...item, timestamp: getServerTS()};
+            delete copy.id;
+            collections['course-student-items'].doc(item.id).update(copy).catch(err => console.error(`Error updating course item: ` + item));
+        },
+        deleteStudentCourseItem: (global, dispatch, id: string) => collections['course-student-items'].doc(id).delete()
+            .catch(err => console.error('Error deleting course item: ' + err)),
+        setStudentCourseItems: (global, dispatch, studentCoursesItems) => ({studentCoursesItems}),
     });
 }

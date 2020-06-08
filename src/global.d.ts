@@ -1,10 +1,10 @@
 import 'reactn';
-import { IFile, IFolder, IConsoleItem, ILanguage, IUserData, ISession, ISessionStudentData, ISnippet, IDisplaySnippet, SnippetType } from '@services/class-data';
+import { IFile, IFolder, IConsoleItem, ILanguage, IUserData, ISession, ISessionStudentData, ISnippet, IDisplaySnippet, SnippetType, ICourse, ICourseStudent, ICourseWS, ICourseStudentItem } from '@services/class-data';
 import { firestore } from 'firebase';
 
 declare module 'reactn/default' {
-    interface Reducer<T, O> {
-        (global: State, dispatch: Dispatch, value: T): O;
+    interface Reducer<T, O, T2 = void> {
+        (global: State, dispatch: Dispatch, value: T, value2?: T2): O;
     }
     export interface Reducers {
         checkLogin: Reducer<void, void>;
@@ -23,7 +23,7 @@ declare module 'reactn/default' {
         setSnippets: Reducer< State['snippets'], Pick<State, 'snippets'> >;
         setSnippetToDisplay: (global: State, dispatch: Dispatch, type: SnippetType, id?: string) => Pick<State, 'snippetToDisplay'>;
         addSnippet: (global: State, dispatch: Dispatch, code: ISnippet['code'], name: string) => void;
-        saveSnippet: Reducer< ISnippet, void>;
+        saveSnippet: Reducer< IDisplaySnippet, void>;
         removeSnippet: Reducer< ISnippet, void>;
         setSesion: Reducer< State['session'], Pick<State, 'session'> >;
         toggleSessionFile: Reducer< IFile, void >;
@@ -43,6 +43,19 @@ declare module 'reactn/default' {
         joinSessionAfterLogin: Reducer<State['user'], void>;
         setStudentSessionDatum: (global: State, dispatch: Dispatch, type: keyof ISessionStudentData, data: any) => void;
         setStudentSessionData: Reducer< State['sessionStudentData'], Pick<State, 'sessionStudentData'> >;
+        setCourses: Reducer< State['courses'], Pick<State, 'courses'> >;
+        addCourse: Reducer< Omit<ICourseWS, 'id'>, void>;
+        updateCourse: Reducer< ICourseWS, void>;
+        deleteCourse: Reducer< string, void >;
+        listenToInstructorCourses: Reducer< string, void>;
+        setCourseStudents: Reducer< string, Pick<State, 'courseStudents'>, ICourseStudent[]>;
+        listenToStudentCourses: Reducer< firebase.User, void>;
+        updateStudentCourse: Reducer< ICourseStudent, void >;
+        setStudentCourses: Reducer< State['studentCourses'], Pick<State, 'studentCourses'> >;
+        addStudentCourseItem: Reducer< ICourseStudent, void>;
+        updateStudentCourseItem: Reducer< ICourseStudentItem, void>;
+        deleteStudentCourseItem: Reducer< string, void>;
+        setStudentCourseItems: Reducer< State['studentCoursesItems'], Pick<State, 'studentCoursesItems'> >;
     }
     export interface State {
         'user': firebase.User; 
@@ -64,5 +77,9 @@ declare module 'reactn/default' {
         'loadedData': Record<string, string>;
         'console': IConsoleItem[];
         'language': ILanguage;
+        'courses': ICourse[];
+        'courseStudents': Record<string, ICourseStudent[]>;
+        'studentCourses': ICourseStudent[];
+        'studentCoursesItems' : Record<string, ICourseStudentItem[]>;
     }
 }

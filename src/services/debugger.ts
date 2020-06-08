@@ -1,7 +1,9 @@
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 import { TextCodes } from "@components/Trans";
 import last from 'lodash/last';
+import omit from "lodash/omit";
 
+// NOTE - parentheses/brackets closing must come after opening
 export enum TokenType {
     Nothing, // Occupy the zero val
     // Keywords
@@ -16,6 +18,8 @@ export enum TokenType {
     For,
     Continue,
     Break,
+    False,
+    True,
 
     // Operators
     Assign,
@@ -50,8 +54,10 @@ export enum TokenType {
     ParenClose,
     CurlyOpen,
     CurlyClose,
+    CurlyEmpty,
     SquareOpen,
     SquareClose,
+    SquareEmpty,
 
     // Values
     String,
@@ -71,6 +77,8 @@ const valueToType: {[key: string]: TokenType} = {
     'for': TokenType.For,
     'continue': TokenType.Continue,
     'break': TokenType.Break,
+    'true': TokenType.True,
+    'false': TokenType.False,
     '=': TokenType.Assign,
     '+=': TokenType.AddAssign,
     '-=': TokenType.SubtAssign,
@@ -100,8 +108,10 @@ const valueToType: {[key: string]: TokenType} = {
     ')': TokenType.ParenClose,
     '{': TokenType.CurlyOpen,
     '}': TokenType.CurlyClose,
+    '{}': TokenType.CurlyEmpty,
     '[': TokenType.SquareOpen,
-    ']': TokenType.SquareClose
+    ']': TokenType.SquareClose,
+    '[]': TokenType.SquareEmpty,
 }
 const isAssignment = (type: TokenType): boolean => [
         TokenType.Assign,
@@ -151,8 +161,26 @@ interface IStatement {
     token: IToken;
     execute: (scope: Scope, context?: any) => any;
     toString: () => string;
-    isBlockStatement?: () => boolean;
+    toJSON: () => object;
 }
+const statementToJSON = <T extends IStatement, U extends keyof T>(statement: T, fields: U[] = []): object => {
+    if (!statement) {
+        return statement;
+    }
+    const extra = fields.reduce((acc: Record<string, any>, field) => {
+        const value = (statement as any)[field];
+        if (value) {
+            if (Array.isArray(value) && value.length && value[0].toJSON) {
+                acc[field as string] = value.map((member) => member.toJSON());
+            } else {
+                acc[field as string] = value.toJSON ? value.toJSON() : value;
+            }
+        }
+        return acc;
+    }, {})
+    return {type: statement.constructor.name, token: omit(statement.token, ['type']), ...extra};
+}
+const execute = async (statement: any, scope: Scope) => (statement && statement.execute) ? await statement.execute(scope) : statement;
 class VariableState {
     declaredType?: TokenType;
     identifier: IToken;
@@ -191,6 +219,9 @@ export class DebugExecution implements IDebugCallbacks {
         try {
             const interpreter = new JSInterpreter(tokens);
             const topBlock = interpreter.top;
+            if (localStorage.testRecording) {
+                localStorage.expected = JSON.stringify(topBlock.toJSON());
+            }
             this.globalScope = new GlobalScope(this);
             topBlock.execute(new Scope(this.globalScope, new ClosureVariables()), () => this.stepByStep = false).catch(this.handleError);
         } catch (err) {
@@ -356,21 +387,27 @@ class Scope implements IScope {
     }
 }
 class Variable implements IStatement {
-    token: IToken;
-    constructor(token: IToken) {
-        this.token = token;
-    }
+    constructor(public token: IToken) {}
     execute = async (scope: IScope) => {
         return scope.get(this.token);
     }
     toString = () => this.token.value.toString()
+    toJSON = (): object => statementToJSON(this)
 }
 class NativeValue implements IStatement {
-    token: IToken;
-    constructor(token: IToken) {
-        this.token = token;
-    }
-    execute = async (_scope: IScope) => this.token.value;
+    constructor(public token: IToken) {}
+    execute = async () => this.token.value;
+    toJSON = (): object => statementToJSON(this)
+}
+class BooleanValue implements IStatement {
+    constructor(public token: IToken) {}
+    execute = async () => this.token.type === TokenType.True;
+    toJSON = (): object => statementToJSON(this)
+}
+class LiteralArray implements IStatement {
+    constructor(public token: IToken, public members: IStatement[] = []) {}
+    execute = async (scope: Scope) => this.members.map((member) => (member && member.execute) ? member.execute(scope) : member);
+    toJSON = (): object => statementToJSON(this, ['members']);
 }
 class VariableDeclaration implements IStatement {
     varType: TokenType;
@@ -382,6 +419,7 @@ class VariableDeclaration implements IStatement {
     execute = async (scope: IScope) => {
         scope.set(this.token.value as string, undefined, this.token, this.varType);
     }
+    toJSON = (): object => statementToJSON(this, ['varType'])
 }
 class Assignment implements IStatement {
     token: IToken;
@@ -405,8 +443,8 @@ class Assignment implements IStatement {
         if (type === TokenType.Assign) {
             if (declaredType || left instanceof Variable) {
                 scope.set(key, val, left.token, declaredType);
-            } else if (left instanceof DotStatement) {
-                await (left as DotStatement).assign(scope, val);
+            } else if (left instanceof PropAccessStatement) {
+                await (left as PropAccessStatement).assign(scope, val);
             } else {
                 throw scope.getException(token, {text: TextCodes.oops});
             }
@@ -442,7 +480,7 @@ class Assignment implements IStatement {
             returnVal = returnOldVal ? oldVal : newVal;
             if (left instanceof Variable) {
                 scope.set(key, newVal, token);
-            } else if (left instanceof DotStatement) {
+            } else if (left instanceof PropAccessStatement) {
                 await left.assign(scope, newVal);
             } else {
                 throw scope.getException(token, {text: TextCodes.oops});
@@ -451,7 +489,7 @@ class Assignment implements IStatement {
         }
         return returnVal;
     }
-    isBlockStatement = () => !!this.right && !!this.right.isBlockStatement && this.right.isBlockStatement()
+    toJSON = (): object => statementToJSON(this, ['left', 'right'])
 }
 class FunctionCall implements IStatement {
     token: IToken; // token of (
@@ -474,6 +512,7 @@ class FunctionCall implements IStatement {
             throw scope.getException(func.token, createText(TextCodes.notAFunction_val, {val: func.toString()}))
         }
     }
+    toJSON = (): object => statementToJSON(this, ['func', 'args'])
 }
 class FunctionDef implements IStatement {
     token: IToken;
@@ -513,7 +552,7 @@ class FunctionDef implements IStatement {
             return result.value;
         }
     }
-    isBlockStatement = () => true;
+    toJSON = (): object => statementToJSON(this, ['identifier', 'args', 'token'])
 }
 class Return implements IStatement {
     token: IToken;
@@ -526,6 +565,7 @@ class Return implements IStatement {
         scope.notify(this.arg.token, {text: TextCodes.functionReturn_val, params: {val: result}});
         return new ReturnValue(result);
     }
+    toJSON = (): object => statementToJSON(this, ['arg'])
 }
 class ReturnValue {
     value: any;
@@ -554,6 +594,7 @@ class If implements IStatement {
             return elseStatement && await elseStatement.execute(scope);
         }
     }
+    toJSON = (): object => statementToJSON(this, ['condition', 'body', 'elseStatement'])
 }
 class Loop implements IStatement {
     token: IToken;
@@ -587,18 +628,17 @@ class Loop implements IStatement {
             }
         }
     }
+    toJSON = (): object => statementToJSON(this, ['initialization', 'condition', 'postBlock', 'outerClosure'])
 }
 class EndLoopRun implements IStatement {
-    token: IToken;
-    constructor(token: IToken) {
-        this.token = token;
-    }
+    constructor(public token: IToken) {}
     execute = (scope: IScope) => {
         scope.notify(this.token, {text: this.token.type === TokenType.Break ? 
             TextCodes.loopDone : TextCodes.loopContinue }
         );
         return this;
     }
+    toJSON = (): object => statementToJSON(this)
 }
 class ClosureVariables {
     declaredVariables: Record<string, boolean> = {};
@@ -617,6 +657,10 @@ class ClosureVariables {
         return (varApperances && varApperances.some(({line, offset}) => line === token.line && offset === token.offset))
             || !this.declaredVariables[key];
     }
+    toJSON = () => ({declaredVariables: this.declaredVariables, appearances: Object.entries(this.appearances).reduce((acc: Record<string, object>, [key, token]) => {
+        acc[key] = omit(token, ['type']);
+        return acc;
+    }, {})})
 }
 class Block implements IStatement {
     token: IToken;
@@ -641,45 +685,42 @@ class Block implements IStatement {
         endCallback && endCallback();
         return result;
     }
+    toJSON = (): object => statementToJSON(this, ['statements', 'variables'])
 }
-class DotStatement implements IStatement {
-    token: IToken;
-    left: IStatement;
-    right: IToken;
-    constructor(token: IToken, left: IStatement, right: IToken) {
-        this.token = token;
-        this.left = left;
-        this.right = right;
+class PropAccessStatement implements IStatement {
+    isDot: boolean;
+    constructor(public token: IToken, public left: IStatement, public right: IToken | IStatement) {
+        this.isDot = token.type === TokenType.Dot;
     }
     execute = async (scope: Scope, leftValRef?: any[]) => {
-        const {left, right} = this;
-        const leftVal = left.execute ? await left.execute(scope) : left;
+        const {left, right, isDot} = this;
+        const leftVal = await execute(left, scope);
+        const rightToken: IToken = isDot ? right as IToken : (right as IStatement).token;
+        const prop = await this.getRightProp(scope);
         if (leftVal === undefined || leftVal === null) { // TODO - any other cases?
-            throw scope.getException(right,
-                createText(leftVal === null ? TextCodes.nullHasNoProp_name_prop : TextCodes.undefinedHasNoProp_name_prop, {name: left.toString(), prop: right.value}))
+            throw scope.getException(rightToken,
+                createText(leftVal === null ? TextCodes.nullHasNoProp_name_prop : TextCodes.undefinedHasNoProp_name_prop, {name: left.toString(), prop}))
         }
         if (leftValRef) {
             leftValRef[0] = leftVal;
         }
-        return leftVal[right.value as string];
+        return leftVal[prop];
     }
     assign = async (scope: Scope, value: any) => {
         const {left, right} = this;
-        const leftVal = left.execute ? await left.execute(scope) : left;
+        const leftVal = await execute(left, scope);
         // TODO - handle errors
-        return leftVal[right.value] = value;
+        return leftVal[await this.getRightProp(scope)] = value;
     }
-    toString = () => `${this.left.toString()}.${this.right.value}`;
+    getRightProp = async (scope: Scope): Promise<string | number> => {
+        const {right, isDot} = this;
+        return isDot ? (right as IToken).value as string : await execute(right as IStatement, scope) as string;
+    }
+    toString = () => `${this.left.toString()}.${(this.isDot ? this.right as IToken : (this.right as IStatement).token).value}`;
+    toJSON = (): object => statementToJSON(this, ['isDot', 'left', 'right'])
 }
 class OperationStatement implements IStatement {
-    token: IToken;
-    left: IStatement;
-    right: IStatement;
-    constructor(token: IToken, left: IStatement, right?: IStatement) {
-        this.token = token;
-        this.left = left;
-        right && (this.right = right);
-    }
+    constructor(public token: IToken, public left: IStatement, public right?: IStatement) {}
     execute = async (scope: Scope) => {
         const {token, left, right} = this;
         const lVal = left && await left.execute(scope);
@@ -715,6 +756,7 @@ class OperationStatement implements IStatement {
                 return lVal || rVal;
         }
     }
+    toJSON = (): object => statementToJSON(this, ['left', 'right'])
 }
 class DebugError extends Error {
     token: IToken;
@@ -731,13 +773,20 @@ export class JSInterpreter {
     closureStack: ClosureVariables[] = [];
     error: {msg: string, token:IToken};
 
-    static tokenize = (lines: string[]) => {
+    // lineTokens is for testing
+    static tokenize = (lines: string[], lineTokens?: monaco.Token[][]) => {
         const tokens: JSInterpreter['tokens'] = [{
             type: TokenType.CurlyOpen,
             line: 0,
             offset: 0
         }];
-        const lineTokens = monaco.editor.tokenize(lines.join('\n'), 'javascript');
+        if (!lineTokens) {
+            lineTokens = monaco.editor.tokenize(lines.join('\n'), 'javascript');
+            if (localStorage.testRecording) {
+                localStorage.lines = JSON.stringify(lines);
+                localStorage.lineTokens = JSON.stringify(lineTokens);
+            }
+        }
         const tokensWLines: [monaco.Token, number][] = [];
         lineTokens.forEach((lTokens, line) => lTokens.forEach(token => tokensWLines.push([token, line])));
         
@@ -773,6 +822,7 @@ export class JSInterpreter {
             case 'delimiter.js':
             case 'delimiter.bracket.js':
             case 'delimiter.parenthesis.js':
+            case 'delimiter.square.js':
             case 'delimiter.angle.js':
                 if (valueToType[value] !== undefined) {
                     type = valueToType[value]
@@ -813,17 +863,17 @@ export class JSInterpreter {
     processBraceClosing = () => {
         const bracesStack: IToken[] = [];
         this.tokens.forEach((token, idx) => {
-            let isCurly = false;
             switch (token.type) {
                 case TokenType.CurlyOpen:
                 case TokenType.ParenOpen:
+                case TokenType.SquareOpen:
                     bracesStack.push(token);
                     break;
                 case TokenType.CurlyClose:
-                    isCurly = true;
                 case TokenType.ParenClose:
+                case TokenType.SquareClose:
                     const opening = bracesStack.pop();
-                    if (opening.type === (isCurly ? TokenType.CurlyOpen : TokenType.ParenOpen)) {
+                    if (opening.type === token.type - 1) {
                         opening.closingIndex = idx;
                     } else {
                         throw this.getCompilationError({text: TextCodes.unclosedBraces}, opening);
@@ -947,7 +997,7 @@ export class JSInterpreter {
                     continue;
                 case TokenType.Dot:
                     this.assertTokentype(i+1, TokenType.Identifier);
-                    pushStatement(new DotStatement(token, getStatement(token), tokens[++i]));
+                    pushStatement(new PropAccessStatement(token, getStatement(token), tokens[++i]));
                     continue;
                 case TokenType.Increment:
                 case TokenType.Decrement:
@@ -961,14 +1011,14 @@ export class JSInterpreter {
                     if (statementStack.length && !isExpectingArgument()) {
                         const func = getStatement(token);
                         let args: IStatement[];
-                        [args, nextIdx] = this.compileArgsList(i);
+                        [args, nextIdx] = isEmpty ? [[], i+1] : this.compileStatementList(i);
                         statement = new FunctionCall(token, func, args);
                     } else if (!isEmpty) {
                         [statement, nextIdx] = this.compileStatement(i + 1, [TokenType.ParenClose], token.closingIndex);
                         // Anonymous function call
                         if (statement instanceof FunctionDef) {
                             let args: IStatement[];
-                            [args, nextIdx] = this.compileArgsList(nextIdx);
+                            [args, nextIdx] = this.compileStatementList(nextIdx);
                             statement = new FunctionCall(token, statement, args);    
                         }
                     } else {
@@ -981,6 +1031,25 @@ export class JSInterpreter {
                 case TokenType.Number:
                 case TokenType.String:
                     pushStatement(new NativeValue(token));
+                    continue;
+                case TokenType.True:
+                case TokenType.False:
+                    pushStatement(new BooleanValue(token));
+                    continue;
+                case TokenType.SquareOpen:
+                    let statement;
+                    if (isExpectingArgument()) {
+                        const args = this.compileStatementList(i)[0];
+                        statement = new LiteralArray(token, args);
+                    } else {
+                        const right = this.compileStatement(i + 1, [TokenType.SquareClose], token.closingIndex)[0];
+                        statement = new PropAccessStatement(token, getStatement(token), right);
+                    }
+                    i = token.closingIndex - 1;
+                    pushStatement(statement);
+                    continue;
+                case TokenType.SquareEmpty:
+                    pushStatement(new LiteralArray(token));
                     continue;
                 case TokenType.Return:
                     assertStart();
@@ -1050,21 +1119,14 @@ export class JSInterpreter {
         }
         return [new Block(this.tokens[idx], statements, this.closureStack.pop()), closeIndex + 1];
     }
-    compileArgsList = (idx: number): ICompResult<IStatement[]> => {
-        const {tokens} = this;
+    compileStatementList = (idx: number): ICompResult<IStatement[]> => {
+        const {type, closingIndex} = this.tokens[idx];
+        let nextIdx = idx+1;
         const args: IStatement[] = [];
-        let nextIdx = idx + 1;
-        const token = tokens[idx];
-        let {closingIndex} = token;
-        if (token.type === TokenType.ParenEmpty) {
-            closingIndex = idx;
-        } else {
-            this.assertTokentype(idx, TokenType.ParenOpen);
-            let arg;
-            while (nextIdx < closingIndex) {
-                [arg, nextIdx] = this.compileStatement(nextIdx, [TokenType.Comma, TokenType.ParenClose], closingIndex);
-                args.push(arg);
-            }
+        let arg;
+        while (nextIdx < closingIndex) {
+            [arg, nextIdx] = this.compileStatement(nextIdx, [TokenType.Comma, type + 1], closingIndex);
+            args.push(arg);
         }
         return [args, closingIndex + 1];
     }
@@ -1078,7 +1140,14 @@ export class JSInterpreter {
             identifier = undefined;
             argsOpenIdx = idx + 1;
         }
-        let [args, nextIdx] = this.compileArgsList(argsOpenIdx);
+        const argsOpenToken = tokens[argsOpenIdx];
+        let args, nextIdx;
+        if (argsOpenToken.type === TokenType.ParenEmpty) {
+            [args, nextIdx] = [[], argsOpenIdx + 1];
+        } else {
+            this.assertTokentype(argsOpenIdx, TokenType.ParenOpen);
+            [args, nextIdx] = this.compileStatementList(argsOpenIdx);
+        }
         let block: Block;
         [block, nextIdx] = this.compileBlock(nextIdx);
         const nextToken = tokens[nextIdx];

@@ -1,0 +1,12 @@
+.course-form {
+    padding: 10px;
+    .email-field {
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+}
+.course-list {
+    .ant-list-header h4 {
+        margin: 0;
+    }
+}
